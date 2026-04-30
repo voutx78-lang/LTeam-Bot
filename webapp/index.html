@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LTeam Market</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="hero">
+      <div class="logo">LTeam</div>
+      <h1>LTeam Market</h1>
+      <p>Маркет цифровых услуг, товаров и заказов</p>
+    </header>
+
+    <section class="grid">
+      <button onclick="sendAction('market')">🛒 Маркет</button>
+      <button onclick="sendAction('orders')">📌 Заказы</button>
+      <button onclick="sendAction('create_listing')">➕ Разместить</button>
+      <button onclick="sendAction('create_order')">📝 Создать заказ</button>
+      <button onclick="sendAction('profile')">👤 Профиль</button>
+      <button onclick="sendAction('support')">🆘 Поддержка</button>
+    </section>
+
+    <div class="card">
+      <h2>🛡 Гарант LTeam</h2>
+      <p>Покупатель оплачивает через LTeam, исполнитель получает выплату после выполнения заказа.</p>
+    </div>
+  </div>
+
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

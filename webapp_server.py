@@ -151,7 +151,10 @@ def admin_summary():
 
 @app.get("/")
 def index():
-    return send_from_directory(app.static_folder, "index.html")
+    index_file = Path(app.static_folder) / "index.html"
+    if index_file.exists():
+        return send_from_directory(app.static_folder, "index.html")
+    return jsonify({"status": "ok", "service": "LTeam Market API"})
 
 
 @app.get("/<path:path>")

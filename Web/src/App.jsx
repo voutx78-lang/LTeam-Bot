@@ -14,6 +14,7 @@ import "./Catalog.css";
 import "./CatalogPlatform.css";
 import "./CatalogV3.css";
 import "./CatalogFix.css";
+import "./CatalogPolish.css";
 import "./SellerProfile.css";
 import CatalogV3 from "./CatalogV3";
 

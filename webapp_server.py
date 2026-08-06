@@ -115,6 +115,90 @@ def orders():
     return jsonify([dict(row) for row in rows])
 
 
+@app.get("/api/listings/mine")
+def my_listings():
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    with db() as connection:
+        rows = connection.execute("SELECT id, title, category, price, COALESCE(description, '') AS description, status, created_at FROM listings WHERE seller_id=? ORDER BY id DESC LIMIT 100", (user_id,)).fetchall()
+    return jsonify([dict(row) for row in rows])
+
+
+def can_access_order(connection: sqlite3.Connection, order_id: int, user_id: int) -> bool:
+    order = connection.execute("SELECT customer_id, executor_id FROM orders WHERE id=?", (order_id,)).fetchone()
+    if not order:
+        return False
+    if user_id in {order["customer_id"], order["executor_id"]}:
+        return True
+    return connection.execute("SELECT 1 FROM order_messages WHERE order_id=? AND (sender_id=? OR receiver_id=?) LIMIT 1", (order_id, user_id, user_id)).fetchone() is not None
+
+
+def can_access_deal(connection: sqlite3.Connection, deal_id: int, user_id: int) -> bool:
+    deal = connection.execute("SELECT buyer_id, seller_id FROM deals WHERE id=?", (deal_id,)).fetchone()
+    return bool(deal and user_id in {deal["buyer_id"], deal["seller_id"]})
+
+
+@app.get("/api/orders/<int:order_id>/messages")
+def order_messages(order_id: int):
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    with db() as connection:
+        if not can_access_order(connection, order_id, user_id):
+            return jsonify({"error": "forbidden"}), 403
+        rows = connection.execute("SELECT id, sender_id, receiver_id, text, created_at FROM order_messages WHERE order_id=? ORDER BY id ASC LIMIT 300", (order_id,)).fetchall()
+    return jsonify([dict(row) for row in rows])
+
+
+@app.post("/api/orders/<int:order_id>/messages")
+def send_order_message(order_id: int):
+    user_id = current_user_id()
+    text = str((request.get_json(silent=True) or {}).get("text", "")).strip()[:1200]
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    if not text:
+        return jsonify({"error": "validation", "message": "Введите сообщение."}), 400
+    with db() as connection:
+        if not can_access_order(connection, order_id, user_id):
+            return jsonify({"error": "forbidden"}), 403
+        order = connection.execute("SELECT customer_id, executor_id FROM orders WHERE id=?", (order_id,)).fetchone()
+        receiver_id = order["executor_id"] if order["customer_id"] == user_id else order["customer_id"]
+        cursor = connection.execute("INSERT INTO order_messages(order_id, sender_id, receiver_id, text, created_at) VALUES (?, ?, ?, ?, ?)", (order_id, user_id, receiver_id, text, datetime.now().isoformat()))
+        connection.commit()
+    return jsonify({"ok": True, "id": cursor.lastrowid}), 201
+
+
+@app.get("/api/deals/<int:deal_id>/messages")
+def deal_messages(deal_id: int):
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    with db() as connection:
+        if not can_access_deal(connection, deal_id, user_id):
+            return jsonify({"error": "forbidden"}), 403
+        rows = connection.execute("SELECT id, sender_id, receiver_id, text, created_at FROM deal_messages WHERE deal_id=? ORDER BY id ASC LIMIT 300", (deal_id,)).fetchall()
+    return jsonify([dict(row) for row in rows])
+
+
+@app.post("/api/deals/<int:deal_id>/messages")
+def send_deal_message(deal_id: int):
+    user_id = current_user_id()
+    text = str((request.get_json(silent=True) or {}).get("text", "")).strip()[:1200]
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    if not text:
+        return jsonify({"error": "validation", "message": "Введите сообщение."}), 400
+    with db() as connection:
+        if not can_access_deal(connection, deal_id, user_id):
+            return jsonify({"error": "forbidden"}), 403
+        deal = connection.execute("SELECT buyer_id, seller_id FROM deals WHERE id=?", (deal_id,)).fetchone()
+        receiver_id = deal["seller_id"] if deal["buyer_id"] == user_id else deal["buyer_id"]
+        cursor = connection.execute("INSERT INTO deal_messages(deal_id, sender_id, receiver_id, text, created_at) VALUES (?, ?, ?, ?, ?)", (deal_id, user_id, receiver_id, text, datetime.now().isoformat()))
+        connection.commit()
+    return jsonify({"ok": True, "id": cursor.lastrowid}), 201
+
+
 @app.get("/api/deals")
 def deals():
     user_id = current_user_id()

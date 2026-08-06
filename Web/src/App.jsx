@@ -44,8 +44,9 @@ function Icon({ name }) {
   return <span className={`icon icon-${name}`}>{icons[name] ?? "•"}</span>;
 }
 
-function ListingCard({ item, onOpen }) {
+function ListingCard({ item, onOpen, favorite = false, onFavorite }) {
   return <article className="listing-card" onClick={() => onOpen(item.id)}>
+    {onFavorite && <button className={`favorite-button ${favorite ? "saved" : ""}`} onClick={(event) => { event.stopPropagation(); onFavorite(item.id); }} aria-label="В избранное">{favorite ? "♥" : "♡"}</button>}
     <div className={`listing-cover ${item.accent}`}><span>{item.category.slice(0, 1)}</span></div>
     <div className="listing-copy">
       <p className="eyebrow">{item.category}</p>

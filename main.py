@@ -13,7 +13,10 @@ from aiogram.types import (
     InlineKeyboardButton,
     FSInputFile,
     WebAppInfo,
+    MenuButtonWebApp,
     BotCommand,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
 )
 
 load_dotenv()  # Эта строка обязательна, она загрузит переменные из .env
@@ -21,6 +24,15 @@ from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
+from app.states import (
+    AdminBanState, AdminMessageState, AdminMuteState, AdminReasonState,
+    AdminRoleState, AdminSearchUserState, AdminUnbanState, AdminUserPickState,
+    AdminWarnState, AppealState, BroadcastState, CreateListing, CreateOrder,
+    DealChatState, DealFinalPriceState, DisputeState, ListingDiscussionState,
+    MarketFilterState, OrderChatState, OrderResponseState, PayoutProfileState,
+    ProfileDescriptionState, PromoState, ReceiptState, ReportState, ReviewState,
+    SearchState, SupportState, VerificationRequestState, WithdrawalState,
+)
 
 from typing import Any, Awaitable, Callable, Dict
 
@@ -35,10 +47,14 @@ STAFF_ROLE_LEVELS = {"user": 0, "moderator": 1, "admin": 2, "owner": 3}
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
+NAV_MENU_MESSAGES: dict[int, tuple[int, int]] = {}
 
 DB_PATH = "market.db"
 BANNER_PATH = "Baner.png"
-COMMISSION_PERCENT = 10
+try:
+    COMMISSION_PERCENT = max(0, min(100, int(os.getenv("COMMISSION_PERCENT", "10"))))
+except (TypeError, ValueError):
+    COMMISSION_PERCENT = 10
 MIN_ORDER_BUDGET = 100
 MAX_ORDER_BUDGET = 100_000
 MAX_APPLICATION_PRICE = 150_000
@@ -50,6 +66,8 @@ SBP_NAME = os.getenv("SBP_NAME", "Не указан")
 SBP_PHONE = os.getenv("SBP_PHONE", "Не указан")
 CRYPTO_WALLET = os.getenv("CRYPTO_WALLET", "Не указан")
 WEBAPP_URL = os.getenv("WEBAPP_URL", "").strip()
+TG_CHANNEL_URL = os.getenv("TG_CHANNEL_URL", "").strip()
+TG_CHANNEL_NAME = os.getenv("TG_CHANNEL_NAME", "").strip() or "Канал LTeam"
 
 CATEGORIES = [
     "🎨 Дизайн",
@@ -236,436 +254,95 @@ async def notify_admins(text: str, reply_markup=None):
         except Exception:
             pass
 
+
+def money_parts(amount: int) -> tuple[int, int, int]:
+    amount = int(amount or 0)
+    commission = int(amount * COMMISSION_PERCENT / 100)
+    payout = max(0, amount - commission)
+    total_to_pay = amount
+    return total_to_pay, commission, payout
+
+
+def lteam_card_payment_text(deal_id: int, amount: int) -> str:
+    return f"""
+💳 <b>Оплата через гаранта LTeam</b>
+
+Сделка: <b>#{deal_id}</b>
+К оплате: <b>{int(amount or 0)}₽</b>
+
+🏦 Банк: <b>{html.escape(SBP_BANK)}</b>
+👤 Получатель: <b>{html.escape(SBP_NAME)}</b>
+📱 Карта/СБП: <code>{html.escape(SBP_PHONE)}</code>
+
+⚠️ Переводите деньги только по этим реквизитам LTeam.
+После оплаты нажмите «✅ Я оплатил» и отправьте чек.
+"""
+
+
+def deal_status_title(status: str | None) -> str:
+    return {
+        "discussion": "💬 обсуждение",
+        "waiting_final_price": "💰 ждёт итоговую цену",
+        "waiting_buyer_price_confirm": "🧾 ждёт подтверждение цены",
+        "waiting_admin_payment_approval": "🛡 оплату проверяет админ",
+        "waiting_payment": "💳 ждёт оплату покупателя",
+        "waiting_receipt": "🧾 ждёт чек",
+        "waiting_admin_confirm": "🔎 чек на проверке",
+        "in_work": "🛠 в работе",
+        "waiting_buyer_confirm": "✅ ждёт подтверждение выполнения",
+        "waiting_payout": "💸 ждёт зачисление/выплату",
+        "completed": "🏁 завершена",
+        "payment_rejected": "❌ оплата отклонена",
+        "dispute_open": "🚨 открыт спор",
+        "dispute_resolved_buyer": "↩️ спор решён в пользу покупателя",
+        "dispute_resolved_seller": "✅ спор решён в пользу исполнителя",
+        "frozen": "🧊 заморожена",
+    }.get(status or "", status or "неизвестно")
+
 def user_public_status(user_id: int) -> str:
-    if is_admin(user_id):
-        return "👑 Official LTeam"
-    return seller_stats(user_id).get("status", "🆕 Новый пользователь")
+    return trust_public_badge(user_id) if 'trust_public_badge' in globals() else ("👑 Official LTeam" if is_admin(user_id) else seller_stats(user_id).get("status", "🆕 Новый пользователь"))
 
 
-class CreateListing(StatesGroup):
-    category = State()
-    title = State()
-    item_type = State()
-    delivery_time = State()
-    price = State()
-    payout_details = State()
-    description = State()
-
-
-class SearchState(StatesGroup):
-    query = State()
-
-
-class MarketFilterState(StatesGroup):
-    budget_manual = State()
-
-class CreateOrder(StatesGroup):
-    category = State()
-    title = State()
-    budget = State()
-    deadline = State()
-    description = State()
-
-
-class ReceiptState(StatesGroup):
-    receipt = State()
-
-
-class SupportState(StatesGroup):
-    text = State()
-    admin_reply = State()
-
-
-class ReviewState(StatesGroup):
-    rating = State()
-    text = State()
-
-
-class ReportState(StatesGroup):
-    reason = State()
-
-
-class DisputeState(StatesGroup):
-    reason = State()
-
-
-class DealChatState(StatesGroup):
-    text = State()
-
-
-class OrderChatState(StatesGroup):
-    text = State()
-
-
-class OrderResponseState(StatesGroup):
-    price = State()
-    deadline = State()
-    text = State()
-
-
-class AdminBanState(StatesGroup):
-    user_id = State()
-
-
-class AdminUnbanState(StatesGroup):
-    user_id = State()
-
-
-class AdminSearchUserState(StatesGroup):
-    user_id = State()
-
-
-class AdminMessageState(StatesGroup):
-    text = State()
-
-
-class AdminWarnState(StatesGroup):
-    reason = State()
-
-
-class AdminReasonState(StatesGroup):
-    reason = State()
-
-
-class AdminRoleState(StatesGroup):
-    user_id = State()
-
-
-class AdminMuteState(StatesGroup):
-    user_id = State()
-    duration = State()
-    reason = State()
-
-
-class BroadcastState(StatesGroup):
-    text = State()
-
-
-class PromoState(StatesGroup):
-    receipt = State()
-
-
-def db():
-    return sqlite3.connect(DB_PATH)
-
-
-def init_db():
+from app.database import db, init_db
+def ensure_user_search_columns():
+    """Мягкая миграция users для поиска по username / имени / нику."""
     with db() as conn:
         cur = conn.cursor()
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            username TEXT,
-            created_at TEXT
-        )
-        """)
-
-        try:
-            cur.execute("ALTER TABLE users ADD COLUMN verified INTEGER DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS listings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            seller_id INTEGER,
-            title TEXT,
-            category TEXT,
-            item_type TEXT,
-            condition TEXT,
-            price INTEGER,
-            description TEXT,
-            status TEXT DEFAULT 'active',
-            created_at TEXT
-        )
-        """)
-
         for column_sql in [
-            "ALTER TABLE listings ADD COLUMN is_top INTEGER DEFAULT 0",
-            "ALTER TABLE listings ADD COLUMN is_highlight INTEGER DEFAULT 0",
-            "ALTER TABLE listings ADD COLUMN bumped_at TEXT",
-            "ALTER TABLE listings ADD COLUMN top_until TEXT",
-            "ALTER TABLE listings ADD COLUMN highlight_until TEXT",
-            "ALTER TABLE listings ADD COLUMN seller_requisites TEXT",
-            "ALTER TABLE listings ADD COLUMN delivery_time TEXT",
+            "first_name TEXT DEFAULT ''",
+            "last_name TEXT DEFAULT ''",
+            "display_name TEXT DEFAULT ''",
         ]:
             try:
-                cur.execute(column_sql)
+                cur.execute(f"ALTER TABLE users ADD COLUMN {column_sql}")
             except sqlite3.OperationalError:
                 pass
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS promo_payments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            listing_id INTEGER,
-            user_id INTEGER,
-            promo_type TEXT,
-            amount INTEGER,
-            payment_method TEXT,
-            status TEXT DEFAULT 'waiting_payment',
-            receipt TEXT,
-            created_at TEXT
-        )
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS favorites (
-            user_id INTEGER,
-            listing_id INTEGER,
-            UNIQUE(user_id, listing_id)
-        )
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS deals (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            listing_id INTEGER,
-            buyer_id INTEGER,
-            seller_id INTEGER,
-            amount INTEGER,
-            commission INTEGER,
-            payout INTEGER,
-            payment_method TEXT,
-            status TEXT,
-            receipt TEXT,
-            created_at TEXT
-        )
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS tickets (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            text TEXT,
-            status TEXT DEFAULT 'open',
-            created_at TEXT
-        )
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS reviews (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            deal_id INTEGER,
-            reviewer_id INTEGER,
-            seller_id INTEGER,
-            rating INTEGER,
-            text TEXT,
-            created_at TEXT
-        )
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS reports (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            listing_id INTEGER,
-            reason TEXT,
-            created_at TEXT
-        )
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS orders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            customer_id INTEGER,
-            title TEXT,
-            category TEXT,
-            budget INTEGER,
-            description TEXT,
-            status TEXT DEFAULT 'active',
-            created_at TEXT
-        )
-        """)
-
-        try:
-            cur.execute("ALTER TABLE orders ADD COLUMN deadline TEXT")
-        except sqlite3.OperationalError:
-            pass
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS user_screens (
-            user_id INTEGER PRIMARY KEY,
-            chat_id INTEGER,
-            message_id INTEGER
-        )
-        """)
-
-        for column_sql in [
-            "ALTER TABLE reports ADD COLUMN target_type TEXT DEFAULT 'listing'",
-            "ALTER TABLE reports ADD COLUMN target_id INTEGER",
-            "ALTER TABLE reports ADD COLUMN status TEXT DEFAULT 'new'",
-            "ALTER TABLE orders ADD COLUMN executor_id INTEGER",
-        ]:
-            try:
-                cur.execute(column_sql)
-            except sqlite3.OperationalError:
-                pass
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS banned_users
- (
-            user_id INTEGER PRIMARY KEY,
-            reason TEXT,
-            banned_by INTEGER,
-            created_at TEXT
-        )
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS deal_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            deal_id INTEGER,
-            sender_id INTEGER,
-            receiver_id INTEGER,
-            text TEXT,
-            created_at TEXT
-        )
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS order_applications (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            order_id INTEGER,
-            executor_id INTEGER,
-            customer_id INTEGER,
-            status TEXT DEFAULT 'new',
-            created_at TEXT,
-            UNIQUE(order_id, executor_id)
-        )
-        """)
-
-        for column_sql in [
-            "ALTER TABLE order_applications ADD COLUMN price INTEGER DEFAULT 0",
-            "ALTER TABLE order_applications ADD COLUMN deadline TEXT",
-            "ALTER TABLE order_applications ADD COLUMN comment TEXT",
-            "ALTER TABLE order_applications ADD COLUMN updated_at TEXT",
-        ]:
-            try:
-                cur.execute(column_sql)
-            except sqlite3.OperationalError:
-                pass
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS order_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            order_id INTEGER,
-            sender_id INTEGER,
-            receiver_id INTEGER,
-            text TEXT,
-            created_at TEXT
-        )
-        """)
-
-
-        # ===== СЛУЖЕБНЫЕ ТАБЛИЦЫ ДЛЯ РОЛЕЙ, МУТОВ И АДМИН-ЛОГОВ =====
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS staff_roles (
-            user_id INTEGER PRIMARY KEY,
-            role TEXT DEFAULT 'user',
-            assigned_by INTEGER,
-            created_at TEXT
-        )
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS admin_action_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            actor_id INTEGER,
-            target_id INTEGER,
-            action TEXT,
-            details TEXT,
-            created_at TEXT
-        )
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS admin_action_requests (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            requester_id INTEGER,
-            target_id INTEGER,
-            action TEXT,
-            details TEXT,
-            status TEXT DEFAULT 'pending',
-            reviewer_id INTEGER,
-            created_at TEXT,
-            reviewed_at TEXT
-        )
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS muted_users (
-            user_id INTEGER PRIMARY KEY,
-            muted_until TEXT,
-            reason TEXT,
-            muted_by INTEGER DEFAULT 0,
-            created_at TEXT
-        )
-        """)
-
-        try:
-            cur.execute("ALTER TABLE muted_users ADD COLUMN muted_by INTEGER DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS user_message_limits (
-            user_id INTEGER PRIMARY KEY,
-            window_start TEXT,
-            count INTEGER DEFAULT 0,
-            strikes INTEGER DEFAULT 0
-        )
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS security_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            event_type TEXT,
-            context TEXT,
-            text TEXT,
-            status TEXT DEFAULT 'new',
-            created_at TEXT
-        )
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS admin_broadcasts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            admin_id INTEGER,
-            target TEXT,
-            text TEXT,
-            sent_count INTEGER DEFAULT 0,
-            total_count INTEGER DEFAULT 0,
-            created_at TEXT
-        )
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS admin_warnings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            admin_id INTEGER,
-            reason TEXT,
-            created_at TEXT
-        )
-        """)
-
         conn.commit()
 
 
 def save_user(message: Message):
+    ensure_user_search_columns()
+
+    first_name = message.from_user.first_name or ""
+    last_name = message.from_user.last_name or ""
+    username = message.from_user.username or ""
+    display_name = (f"{first_name} {last_name}".strip() or username or str(message.from_user.id))
+
     with db() as conn:
         conn.execute(
             """
-            INSERT OR IGNORE INTO users (user_id, username, created_at)
-            VALUES (?, ?, ?)
+            INSERT OR IGNORE INTO users (user_id, username, created_at, first_name, last_name, display_name)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (
-                message.from_user.id,
-                message.from_user.username or "",
-                datetime.now().isoformat(),
-            ),
+            (message.from_user.id, username, datetime.now().isoformat(), first_name, last_name, display_name),
+        )
+        conn.execute(
+            """
+            UPDATE users
+            SET username=?, first_name=?, last_name=?, display_name=?
+            WHERE user_id=?
+            """,
+            (username, first_name, last_name, display_name, message.from_user.id),
         )
         conn.commit()
 
@@ -712,48 +389,103 @@ def is_staff(user_id: int) -> bool:
 
 
 def can_act(actor_id: int, target_id: int | None = None, action: str = "") -> tuple[bool, str]:
-    """Единая проверка опасных админ-действий.
+    """Единая модель прав LTeam.
 
-    Главное правило:
-    - пользователь без роли не может админ-действия;
-    - нельзя действовать на самого себя;
-    - нельзя действовать на равную или старшую роль;
-    - владельца нельзя банить/мутить/наказывать через обычные кнопки, даже другому владельцу.
+    ВАЖНО:
+    - все опасные действия должны проходить через эту функцию;
+    - staff нельзя банить/мутить/варнить/понижать обычной админкой;
+    - владельца нельзя наказать или изменить через обычную админку;
+    - равная роль не может действовать на равную роль;
+    - owner-only действия доступны только владельцу.
     """
+    actor_id = int(actor_id or 0)
+    target_id = int(target_id) if target_id is not None else None
+
     actor_role = get_role(actor_id)
     actor_level = role_level(actor_id)
+
     target_role = get_role(target_id) if target_id else "user"
     target_level = role_level(target_id) if target_id else 0
 
     if actor_level <= 0:
         return False, "Нет доступа."
 
-    if target_id and int(actor_id) == int(target_id):
+    if target_id and actor_id == target_id:
         return False, "Нельзя выполнять это действие над самим собой."
 
-    protected_target_actions = {
-        "ban", "unban", "mute", "warn", "verify", "unverify",
-        "deal_manage", "force_unban"
+    owner_only = {
+        "set_role",
+        "remove_role",
+        "approve_admin_request",
+        "reject_admin_request",
+        "view_admin_reports",
+        "close_admin_report",
+        "force_unban",
+        "cleanup_staff_punishments",
     }
 
-    if target_id and target_role == "owner" and action in protected_target_actions:
-        return False, "Владельца нельзя банить, мутить или наказывать через админку."
+    admin_plus = {
+        "ban",
+        "unban",
+        "verify",
+        "unverify",
+        "grant_plus",
+        "revoke_plus",
+        "broadcast",
+        "finance",
+        "deal_manage",
+        "view_logs",
+    }
 
-    if target_id and actor_level <= target_level:
-        return False, "Нельзя выполнять действие над равной или старшей ролью."
+    moderator_plus = {
+        "moderate",
+        "warn",
+        "mute",
+        "view_user",
+        "view_reports",
+        "view_security",
+    }
 
-    admin_actions = {"ban", "unban", "verify", "unverify", "broadcast", "finance", "deal_manage"}
-    owner_actions = {"set_role", "remove_role", "force_unban", "approve_admin_request"}
-    moderator_actions = {"moderate", "warn", "mute", "view_user", "view_reports"}
+    protected_staff_actions = {
+        "ban",
+        "unban",
+        "mute",
+        "warn",
+        "verify",
+        "unverify",
+        "grant_plus",
+        "revoke_plus",
+        "deal_manage",
+        "set_role",
+        "remove_role",
+        "force_unban",
+    }
 
-    if action in owner_actions and actor_role != "owner":
+    # Важный инвариант безопасности:
+    # owner / admin / moderator не получают обычные наказания из админки.
+    # Если нужно наказать staff — владелец сначала снимает роль, а уже потом
+    # применяется обычный бан / мут / варн к обычному пользователю.
+    staff_punishment_actions = {"ban", "mute", "warn"}
+    if target_id and target_level >= STAFF_ROLE_LEVELS["moderator"] and action in staff_punishment_actions:
+        return False, "Staff-пользователей нельзя банить, мутить или варнить. Если нужен доступный для санкций аккаунт — сначала снимите роль через владельца."
+
+    if action in owner_only and actor_role != "owner":
         return False, "Это действие доступно только владельцу."
-    if action in admin_actions and actor_level < STAFF_ROLE_LEVELS["admin"]:
-        return False, "Это действие доступно только админу или владельцу."
-    if action in moderator_actions and actor_level < STAFF_ROLE_LEVELS["moderator"]:
-        return False, "Это действие доступно только модератору, админу или владельцу."
-    return True, ""
 
+    if action in admin_plus and actor_level < STAFF_ROLE_LEVELS["admin"]:
+        return False, "Это действие доступно только админу или владельцу."
+
+    if action in moderator_plus and actor_level < STAFF_ROLE_LEVELS["moderator"]:
+        return False, "Это действие доступно только модератору, админу или владельцу."
+
+    if target_id and action in protected_staff_actions:
+        if target_role == "owner":
+            return False, "Владельца нельзя наказывать или менять через обычную админку."
+
+        if actor_level <= target_level:
+            return False, "Нельзя выполнять действие над равной или старшей ролью."
+
+    return True, ""
 
 def log_admin_action(actor_id: int, action: str, target_id: int | None = None, details: str = "") -> None:
     with db() as conn:
@@ -764,16 +496,958 @@ def log_admin_action(actor_id: int, action: str, target_id: int | None = None, d
         conn.commit()
 
 
+
+
+
+async def require_payout_profile_or_show(call: CallbackQuery, state: FSMContext, next_callback: str = "") -> bool:
+    """Совместимость старого сценария.
+
+    Раньше создание заказа/отклик могли требовать реквизиты заранее, из-за чего
+    ломалась кнопка «Создать заказ». В новой логике реквизиты нужны только на
+    этапе вывода средств, поэтому здесь просто разрешаем продолжить.
+    """
+    return True
+
+
+def protected_staff_ids() -> set[int]:
+    """Все ID, которые нельзя банить/мутить автоматикой."""
+    ids = set(int(x) for x in (OWNER_IDS + ADMIN_IDS + MODERATOR_IDS))
+    try:
+        with db() as conn:
+            rows = conn.execute("SELECT user_id FROM staff_roles WHERE role IN ('owner', 'admin', 'moderator')").fetchall()
+        ids.update(int(r[0]) for r in rows)
+    except Exception:
+        pass
+    return ids
+
+def add_column_if_missing(cur, table: str, column_sql: str) -> None:
+    """Добавляет колонку, если её ещё нет. Безопасно для повторных запусков."""
+    try:
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN {column_sql}")
+    except sqlite3.OperationalError:
+        pass
+
+
+def ensure_admin_tables() -> None:
+    """Безопасные миграции для админки, ролей, заявок, логов и жалоб.
+
+    Важно: функция специально совместима со старыми версиями таблиц, которые уже могли
+    быть созданы в ранних итерациях main.py.
+    """
+    with db() as conn:
+        cur = conn.cursor()
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS staff_roles (
+            user_id INTEGER PRIMARY KEY,
+            role TEXT DEFAULT 'user',
+            assigned_by INTEGER,
+            created_at TEXT
+        )
+        """)
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS admin_action_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            actor_id INTEGER,
+            target_id INTEGER,
+            action TEXT,
+            details TEXT,
+            created_at TEXT
+        )
+        """)
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS admin_action_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_type TEXT,
+            action TEXT,
+            target_id INTEGER,
+            requested_by INTEGER,
+            requester_id INTEGER,
+            original_admin_id INTEGER,
+            reason TEXT,
+            details TEXT,
+            status TEXT DEFAULT 'pending',
+            resolved_by INTEGER,
+            reviewer_id INTEGER,
+            decision TEXT,
+            created_at TEXT,
+            resolved_at TEXT,
+            reviewed_at TEXT
+        )
+        """)
+
+        for column_sql in [
+            "request_type TEXT",
+            "action TEXT",
+            "target_id INTEGER",
+            "requested_by INTEGER",
+            "requester_id INTEGER",
+            "original_admin_id INTEGER",
+            "reason TEXT",
+            "details TEXT",
+            "status TEXT DEFAULT 'pending'",
+            "resolved_by INTEGER",
+            "reviewer_id INTEGER",
+            "decision TEXT",
+            "created_at TEXT",
+            "resolved_at TEXT",
+            "reviewed_at TEXT",
+        ]:
+            add_column_if_missing(cur, "admin_action_requests", column_sql)
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS muted_users (
+            user_id INTEGER PRIMARY KEY,
+            muted_until TEXT,
+            reason TEXT,
+            muted_by INTEGER DEFAULT 0,
+            created_at TEXT
+        )
+        """)
+        add_column_if_missing(cur, "muted_users", "muted_by INTEGER DEFAULT 0")
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS admin_warnings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            admin_id INTEGER,
+            reason TEXT,
+            text TEXT,
+            created_at TEXT
+        )
+        """)
+        add_column_if_missing(cur, "admin_warnings", "reason TEXT")
+        add_column_if_missing(cur, "admin_warnings", "text TEXT")
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS security_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            event_type TEXT,
+            context TEXT,
+            text TEXT,
+            status TEXT DEFAULT 'new',
+            created_at TEXT
+        )
+        """)
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS admin_broadcasts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            admin_id INTEGER,
+            target TEXT,
+            text TEXT,
+            sent_count INTEGER DEFAULT 0,
+            total_count INTEGER DEFAULT 0,
+            created_at TEXT
+        )
+        """)
+
+        for column_sql in [
+            "target_type TEXT DEFAULT 'listing'",
+            "target_id INTEGER",
+            "status TEXT DEFAULT 'new'",
+        ]:
+            add_column_if_missing(cur, "reports", column_sql)
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS protect_appeals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            reason TEXT,
+            status TEXT DEFAULT 'pending',
+            reviewer_id INTEGER,
+            admin_comment TEXT,
+            created_at TEXT,
+            reviewed_at TEXT
+        )
+        """)
+        for column_sql in [
+            "user_id INTEGER",
+            "reason TEXT",
+            "status TEXT DEFAULT 'pending'",
+            "reviewer_id INTEGER",
+            "admin_comment TEXT",
+            "created_at TEXT",
+            "reviewed_at TEXT",
+        ]:
+            add_column_if_missing(cur, "protect_appeals", column_sql)
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS protect_overrides (
+            user_id INTEGER PRIMARY KEY,
+            status TEXT DEFAULT 'active',
+            trusted_until TEXT,
+            reason TEXT,
+            created_by INTEGER,
+            created_at TEXT
+        )
+        """)
+        for column_sql in [
+            "status TEXT DEFAULT 'active'",
+            "trusted_until TEXT",
+            "reason TEXT",
+            "created_by INTEGER",
+            "created_at TEXT",
+        ]:
+            add_column_if_missing(cur, "protect_overrides", column_sql)
+
+        conn.commit()
+
+
+def create_admin_request(
+    request_type: str,
+    target_id: int,
+    requested_by: int,
+    reason: str = "",
+    original_admin_id: int | None = None,
+    details: str = "",
+) -> int:
+    """Создаёт заявку на опасное админ-действие."""
+    ensure_admin_tables()
+
+    with db() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO admin_action_requests (
+                request_type, action, target_id,
+                requested_by, requester_id,
+                original_admin_id,
+                reason, details,
+                status, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+            """,
+            (
+                request_type,
+                request_type,
+                target_id,
+                requested_by,
+                requested_by,
+                original_admin_id,
+                reason,
+                details,
+                datetime.now().isoformat(),
+            ),
+        )
+        request_id = cur.lastrowid
+        conn.commit()
+
+    log_admin_action(
+        requested_by,
+        f"request_{request_type}",
+        target_id,
+        f"request_id={request_id}; reason={reason}; details={details}",
+    )
+    return int(request_id)
+
+
+
+
+# ===== LTEAM ADMIN USER RESOLVER =====
+
+def normalize_user_query(value: str) -> str:
+    value = (value or "").strip()
+    for prefix in ("https://t.me/", "http://t.me/", "t.me/"):
+        if value.startswith(prefix):
+            value = value.replace(prefix, "", 1)
+    if value.startswith("@"):
+        value = value[1:]
+    return value.strip()
+
+
+def find_users_for_admin(query: str, limit: int = 8):
+    """Ищет пользователя по ID, @username, ссылке t.me или имени/нику."""
+    ensure_user_search_columns()
+    q = normalize_user_query(query)
+    if not q:
+        return []
+    with db() as conn:
+        if q.isdigit():
+            rows = conn.execute("""
+                SELECT user_id, COALESCE(username,''), COALESCE(display_name,''), COALESCE(first_name,''), COALESCE(last_name,'')
+                FROM users WHERE user_id=?
+            """, (int(q),)).fetchall()
+            if rows:
+                return rows
+        like = f"%{q.lower()}%"
+        return conn.execute("""
+            SELECT user_id, COALESCE(username,''), COALESCE(display_name,''), COALESCE(first_name,''), COALESCE(last_name,'')
+            FROM users
+            WHERE LOWER(COALESCE(username,'')) LIKE ?
+               OR LOWER(COALESCE(display_name,'')) LIKE ?
+               OR LOWER(COALESCE(first_name,'')) LIKE ?
+               OR LOWER(COALESCE(last_name,'')) LIKE ?
+            ORDER BY CASE WHEN LOWER(COALESCE(username,''))=LOWER(?) THEN 0 ELSE 1 END, user_id DESC
+            LIMIT ?
+        """, (like, like, like, like, q, limit)).fetchall()
+
+
+def user_pick_keyboard(rows, action: str, back_callback: str = "admin_panel"):
+    buttons = []
+    for user_id, username, display_name, first_name, last_name in rows:
+        name = display_name or f"{first_name} {last_name}".strip() or username or str(user_id)
+        username_part = f" @{username}" if username else ""
+        buttons.append([InlineKeyboardButton(
+            text=f"👤 {name}{username_part} • {user_id}",
+            callback_data=f"admin_pick_user:{action}:{user_id}",
+        )])
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback)])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def user_action_after_pick_keyboard(action: str, user_id: int, back_callback: str = "admin_panel"):
+    callbacks = {
+        "profile": f"admin_user:{user_id}",
+        "ban": f"admin_ban_user:{user_id}",
+        "unban": f"admin_unban_user:{user_id}",
+        "role": f"admin_role_choose:{user_id}",
+    }
+    titles = {
+        "profile": "👤 Открыть профиль",
+        "ban": "🚫 Забанить",
+        "unban": "✅ Разбанить",
+        "role": "👑 Изменить роль",
+    }
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=titles.get(action, "👤 Открыть профиль"), callback_data=callbacks.get(action, f"admin_user:{user_id}"))],
+        [InlineKeyboardButton(text="👤 Профиль", callback_data=f"admin_user:{user_id}")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback)],
+    ])
+
+
+async def ask_admin_user_query(call: CallbackQuery, state: FSMContext, action: str, title: str, back_callback: str = "admin_panel"):
+    await state.set_state(AdminUserPickState.query)
+    await state.update_data(user_pick_action=action, user_pick_back=back_callback)
+    await show_screen(call, f"""
+{title}
+
+Можно отправить:
+• Telegram ID: <code>123456789</code>
+• username: <code>@username</code>
+• ссылку: <code>t.me/username</code>
+• имя / ник из профиля
+""", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback)]
+    ]), parse_mode="HTML")
+
+
+@dp.message(AdminUserPickState.query)
+async def admin_user_pick_query(message: Message, state: FSMContext):
+    if not is_staff(message.from_user.id):
+        await state.clear()
+        return
+
+    data = await state.get_data()
+    action = data.get("user_pick_action", "profile")
+    back_callback = data.get("user_pick_back", "admin_panel")
+    rows = find_users_for_admin(message.text or "")
+    await state.clear()
+
+    if not rows:
+        await screen_answer(message, "❌ Пользователь не найден. Он должен хотя бы один раз открыть бота.\n\nПопробуйте ID, @username или часть имени.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔎 Искать ещё", callback_data="admin_find_user")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback)],
+        ]), parse_mode="HTML")
+        return
+
+    if len(rows) == 1:
+        uid = int(rows[0][0])
+        await screen_answer(message, f"✅ Пользователь найден: <code>{uid}</code>", reply_markup=user_action_after_pick_keyboard(action, uid, back_callback), parse_mode="HTML")
+        return
+
+    await screen_answer(message, "Найдено несколько пользователей. Выберите нужного:", reply_markup=user_pick_keyboard(rows, action, back_callback), parse_mode="HTML")
+
+
+@dp.callback_query(F.data.startswith("admin_pick_user:"))
+async def admin_pick_user(call: CallbackQuery):
+    if not is_staff(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+    _, action, uid_raw = call.data.split(":")
+    uid = int(uid_raw)
+    if action == "profile":
+        call.data = f"admin_user:{uid}"
+        await admin_user_profile(call)
+    elif action == "ban":
+        call.data = f"admin_ban_user:{uid}"
+        await admin_ban_user_direct(call)
+    elif action == "unban":
+        call.data = f"admin_unban_user:{uid}"
+        await admin_unban_user_direct(call)
+    elif action == "role":
+        call.data = f"admin_role_choose:{uid}"
+        await admin_role_choose(call)
+    else:
+        await call.answer("Неизвестное действие", show_alert=True)
+
+
+# ===== LTEAM PROTECT CORE =====
+
+def has_active_protect_override(user_id: int) -> tuple[bool, str]:
+    """Проверяет, есть ли у пользователя активное одобрение апелляции Protect."""
+    ensure_admin_tables()
+    with db() as conn:
+        row = conn.execute(
+            "SELECT trusted_until, reason FROM protect_overrides WHERE user_id=? AND status='active'",
+            (user_id,),
+        ).fetchone()
+    if not row:
+        return False, ""
+    trusted_until, reason = row
+    if trusted_until:
+        try:
+            if datetime.fromisoformat(trusted_until) <= datetime.now():
+                with db() as conn:
+                    conn.execute("UPDATE protect_overrides SET status='expired' WHERE user_id=?", (user_id,))
+                    conn.commit()
+                return False, ""
+        except Exception:
+            pass
+    return True, reason or "апелляция одобрена"
+
+
+def create_protect_override(user_id: int, reviewer_id: int, reason: str, days: int = 30) -> None:
+    ensure_admin_tables()
+    trusted_until = datetime.now() + timedelta(days=days)
+    with db() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO protect_overrides (user_id, status, trusted_until, reason, created_by, created_at)
+            VALUES (?, 'active', ?, ?, ?, ?)
+            """,
+            (user_id, trusted_until.isoformat(), reason, reviewer_id, datetime.now().isoformat()),
+        )
+        conn.commit()
+
+
+def revoke_protect_override(user_id: int, reviewer_id: int, reason: str = "") -> None:
+    ensure_admin_tables()
+    with db() as conn:
+        conn.execute(
+            "UPDATE protect_overrides SET status='revoked', reason=? WHERE user_id=?",
+            (reason or f"Отозвано владельцем {reviewer_id}", user_id),
+        )
+        conn.commit()
+
+
+def protect_policy_for_user(user_id: int) -> dict:
+    """Жёсткая политика LTeam Protect.
+
+    high risk = 60+ score:
+    - нельзя писать в безопасные чаты;
+    - нельзя создавать новые объявления/заказы;
+    - нельзя откликаться на заказы;
+    - партнёр получает предупреждение уже со среднего риска.
+    """
+    security = get_user_security_score(user_id)
+    score = int(security.get("score", 0))
+
+    if is_staff(user_id):
+        return {
+            "score": score,
+            "badge": "🛡 Staff",
+            "level": "staff",
+            "block_chats": False,
+            "block_create_listing": False,
+            "block_create_order": False,
+            "block_order_application": False,
+            "force_moderation": False,
+            "notify_partner": False,
+            "reasons": security.get("reasons", []),
+        }
+
+    override_active, override_reason = has_active_protect_override(user_id)
+    if override_active:
+        return {
+            "score": score,
+            "badge": "🟢 Апелляция одобрена",
+            "level": "appeal_approved",
+            "block_chats": False,
+            "block_create_listing": False,
+            "block_create_order": False,
+            "block_order_application": False,
+            "force_moderation": False,
+            "notify_partner": False,
+            "reasons": [override_reason] + security.get("reasons", []),
+        }
+
+    high_risk = score >= 60
+    medium_risk = score >= 25
+
+    return {
+        "score": score,
+        "badge": security.get("badge", "🟢 Низкий риск"),
+        "level": security.get("level", "low"),
+        "block_chats": high_risk,
+        "block_create_listing": high_risk,
+        "block_create_order": high_risk,
+        "block_order_application": high_risk,
+        "force_moderation": medium_risk,
+        "notify_partner": medium_risk,
+        "reasons": security.get("reasons", []),
+    }
+
+
+def protect_block_text(user_id: int, action_title: str) -> str:
+    policy = protect_policy_for_user(user_id)
+    return f"""
+🔴 <b>LTeam Protect</b>
+
+Действие заблокировано: <b>{html.escape(action_title)}</b>
+
+Ваш текущий риск: <b>{policy.get('badge')}</b>
+Score: <b>{policy.get('score')}/100</b>
+
+Факторы:
+{security_reasons_text(policy.get('reasons', []), limit=5)}
+
+Чтобы снять ограничение, подайте апелляцию Protect. Владельцы проверят историю, жалобы и события безопасности.
+"""
+
+
+def register_security_event(user_id: int, event_type: str, context: str, text: str = "", status: str = "new") -> None:
+    ensure_admin_tables()
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO security_events (user_id, event_type, context, text, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, event_type, context, (text or "")[:1000], status, datetime.now().isoformat()),
+        )
+        conn.commit()
+
+
+def count_recent_security_events(user_id: int, event_type: str, minutes: int = 1440) -> int:
+    since = datetime.now() - timedelta(minutes=minutes)
+    with db() as conn:
+        return conn.execute(
+            "SELECT COUNT(*) FROM security_events WHERE user_id=? AND event_type=? AND created_at>=?",
+            (user_id, event_type, since.isoformat()),
+        ).fetchone()[0]
+
+
+def protect_warning_text(user_id: int) -> str:
+    security = get_user_security_score(user_id)
+    return f"""
+🛡 <b>LTeam Protect</b>
+
+Пользователь: <code>{user_id}</code>
+Риск: <b>{security.get('badge')}</b>
+Score: <b>{security.get('score')}/100</b>
+
+Факторы:
+{security_reasons_text(security.get('reasons', []), limit=5)}
+
+Рекомендация: не переводите оплату напрямую и ведите сделку только через гаранта LTeam.
+"""
+
+
+async def apply_bypass_punishment(user_id: int, context: str, text: str) -> tuple[bool, str]:
+    # Защита staff должна работать не только через protect_check_outgoing_message,
+    # но и в прямых вызовах этой функции из отдельных сценариев.
+    auto_ok, auto_reason = can_auto_punish(user_id)
+    if not auto_ok:
+        register_security_event(user_id, "bypass_attempt_staff_ignored", context, text, status="ignored")
+        log_admin_action(0, "auto_punishment_blocked_staff", user_id, f"context={context}; {auto_reason}")
+        return False, ""
+
+    register_security_event(user_id, "bypass_attempt", context, text)
+    count = count_recent_security_events(user_id, "bypass_attempt", minutes=1440)
+
+    if count == 1:
+        msg = "⚠️ LTeam Protect: нельзя уводить сделку в личку или просить оплату напрямую. Сообщение заблокировано."
+    elif count == 2:
+        with db() as conn:
+            conn.execute(
+                "INSERT INTO admin_warnings (user_id, admin_id, reason, created_at) VALUES (?, ?, ?, ?)",
+                (user_id, 0, "Авто-варн LTeam Protect: повторная попытка обхода гаранта", datetime.now().isoformat()),
+            )
+            conn.commit()
+        msg = "⚠️ Повторная попытка обхода гаранта. Выдан автоматический варн. Сообщение заблокировано."
+    else:
+        set_mute(user_id, 60, "LTeam Protect: 3 попытки обхода гаранта за 24 часа", muted_by=0)
+        msg = "🔇 LTeam Protect: 3 попытки обхода гаранта. Авто-мут на 60 минут. Сообщение заблокировано."
+
+    await notify_admins(f"""
+🛡 <b>LTeam Protect: обход гаранта</b>
+
+Пользователь: <code>{user_id}</code>
+Контекст: <b>{html.escape(context)}</b>
+Попыток за 24ч: <b>{count}</b>
+
+Текст:
+{html.escape((text or '')[:800])}
+""")
+    return True, msg
+
+
+async def protect_check_outgoing_message(user_id: int, text: str, context: str) -> tuple[bool, str]:
+    # Staff не должен получать авто-предупреждения, авто-муты или блокировки Protect.
+    if is_staff(user_id):
+        return True, ""
+
+    policy = protect_policy_for_user(user_id)
+
+    if policy.get("block_chats"):
+        register_security_event(user_id, "chat_blocked_high_risk", context, text, status="blocked")
+        await notify_admins(f"""
+🔴 <b>LTeam Protect заблокировал сообщение высокого риска</b>
+
+Пользователь: <code>{user_id}</code>
+Контекст: <b>{html.escape(context)}</b>
+Риск: <b>{policy.get('score')}/100</b>
+
+Текст:
+{html.escape((text or '')[:800])}
+""")
+        return False, "🔴 LTeam Protect: ваш аккаунт имеет высокий риск. Сообщение заблокировано до проверки администратором."
+
+    if looks_like_bypass_attempt(text):
+        blocked, msg = await apply_bypass_punishment(user_id, context, text)
+        return not blocked, msg
+
+    return True, ""
+
+
+async def protect_notify_partner_if_needed(sender_id: int, receiver_id: int, context: str):
+    policy = protect_policy_for_user(sender_id)
+    if not policy.get("notify_partner"):
+        return
+    try:
+        await bot.send_message(receiver_id, protect_warning_text(sender_id), parse_mode="HTML")
+    except Exception:
+        pass
+
+
+# ===== LTEAM SECURITY SCORE =====
+
+def get_user_security_score(user_id: int) -> dict:
+    """
+    Риск-профиль пользователя для админки.
+
+    score:
+    0-24   — низкий риск
+    25-59  — средний риск
+    60-100 — высокий риск
+    """
+    score = 0
+    reasons: list[str] = []
+
+    with db() as conn:
+        user = conn.execute(
+            "SELECT created_at, COALESCE(verified, 0) FROM users WHERE user_id=?",
+            (user_id,),
+        ).fetchone()
+
+        reports_by_user = conn.execute(
+            "SELECT COUNT(*) FROM reports WHERE user_id=?",
+            (user_id,),
+        ).fetchone()[0]
+
+        reports_on_user = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM reports r
+            LEFT JOIN listings l ON l.id = r.listing_id
+            LEFT JOIN orders o ON o.id = COALESCE(r.target_id, 0) AND COALESCE(r.target_type, 'listing')='order'
+            WHERE COALESCE(r.target_id, 0)=?
+               OR l.seller_id=?
+               OR o.customer_id=?
+            """,
+            (user_id, user_id, user_id),
+        ).fetchone()[0]
+
+        warnings_count = conn.execute(
+            "SELECT COUNT(*) FROM admin_warnings WHERE user_id=?",
+            (user_id,),
+        ).fetchone()[0]
+
+        active_ban = conn.execute(
+            "SELECT 1 FROM banned_users WHERE user_id=?",
+            (user_id,),
+        ).fetchone() is not None
+
+        active_mute = conn.execute(
+            "SELECT muted_until FROM muted_users WHERE user_id=?",
+            (user_id,),
+        ).fetchone()
+
+        # Даже если в старой базе случайно остался бан/мут staff-пользователя,
+        # риск-профиль не должен считать это реальной активной санкцией.
+        if is_staff(user_id):
+            active_ban = False
+            active_mute = None
+
+        security_events_count = conn.execute(
+            "SELECT COUNT(*) FROM security_events WHERE user_id=?",
+            (user_id,),
+        ).fetchone()[0]
+
+        bypass_events_count = conn.execute(
+            "SELECT COUNT(*) FROM security_events WHERE user_id=? AND event_type='bypass_attempt'",
+            (user_id,),
+        ).fetchone()[0]
+
+        admin_ban_events = conn.execute(
+            "SELECT COUNT(*) FROM admin_action_logs WHERE target_id=? AND action IN ('ban_user', 'unban_user')",
+            (user_id,),
+        ).fetchone()[0]
+
+        completed_deals = conn.execute(
+            "SELECT COUNT(*) FROM deals WHERE (buyer_id=? OR seller_id=?) AND status='completed'",
+            (user_id, user_id),
+        ).fetchone()[0]
+
+        reviews_row = conn.execute(
+            "SELECT COUNT(*), COALESCE(AVG(rating), 0) FROM reviews WHERE seller_id=?",
+            (user_id,),
+        ).fetchone()
+
+    reviews_count = int(reviews_row[0] or 0)
+    avg_rating = float(reviews_row[1] or 0)
+
+    if is_staff(user_id):
+        score -= 15
+        reasons.append("staff-пользователь")
+
+    if user:
+        created_at, verified = user
+        if int(verified or 0):
+            score -= 20
+            reasons.append("верифицирован LTeam")
+
+        try:
+            created_dt = datetime.fromisoformat(created_at)
+            account_age_days = (datetime.now() - created_dt).days
+            if account_age_days < 1:
+                score += 20
+                reasons.append("аккаунт создан сегодня")
+            elif account_age_days < 7:
+                score += 10
+                reasons.append("новый аккаунт")
+        except Exception:
+            score += 5
+            reasons.append("неизвестная дата регистрации")
+    else:
+        score += 15
+        reasons.append("пользователь не найден в users")
+
+    if active_ban:
+        score += 60
+        reasons.append("активный бан")
+
+    if active_mute:
+        try:
+            muted_until = datetime.fromisoformat(active_mute[0])
+            if muted_until > datetime.now():
+                score += 20
+                reasons.append("активный мут")
+        except Exception:
+            pass
+
+    if reports_on_user > 0:
+        score += min(reports_on_user * 12, 36)
+        reasons.append(f"жалобы на пользователя: {reports_on_user}")
+
+    if warnings_count > 0:
+        score += min(warnings_count * 10, 30)
+        reasons.append(f"предупреждения: {warnings_count}")
+
+    if security_events_count > 0:
+        score += min(security_events_count * 8, 32)
+        reasons.append(f"security events: {security_events_count}")
+
+    if bypass_events_count > 0:
+        score += min(bypass_events_count * 15, 45)
+        reasons.append(f"попытки увести сделку: {bypass_events_count}")
+
+    if admin_ban_events > 0:
+        score += min(admin_ban_events * 15, 30)
+        reasons.append(f"история банов/разбанов: {admin_ban_events}")
+
+    if completed_deals >= 5:
+        score -= 20
+        reasons.append("есть 5+ завершённых сделок")
+    elif completed_deals >= 1:
+        score -= 10
+        reasons.append("есть завершённые сделки")
+    else:
+        score += 5
+        reasons.append("нет завершённых сделок")
+
+    if reviews_count >= 3 and avg_rating >= 4.5:
+        score -= 15
+        reasons.append("хороший рейтинг")
+    elif reviews_count > 0 and avg_rating < 3.5:
+        score += 15
+        reasons.append("низкий рейтинг")
+
+    score = max(0, min(100, int(score)))
+
+    if score >= 60:
+        level = "high"
+        badge = "🔴 Высокий риск"
+    elif score >= 25:
+        level = "medium"
+        badge = "🟡 Средний риск"
+    else:
+        level = "low"
+        badge = "🟢 Низкий риск"
+
+    return {
+        "score": score,
+        "level": level,
+        "badge": badge,
+        "reasons": reasons,
+        "reports_by_user": reports_by_user,
+        "reports_on_user": reports_on_user,
+        "warnings_count": warnings_count,
+        "security_events_count": security_events_count,
+        "bypass_events_count": bypass_events_count,
+        "admin_ban_events": admin_ban_events,
+        "completed_deals": completed_deals,
+        "reviews_count": reviews_count,
+        "avg_rating": avg_rating,
+    }
+
+
+def security_reasons_text(reasons: list[str], limit: int = 6) -> str:
+    if not reasons:
+        return "• факторов риска нет"
+
+    visible = reasons[:limit]
+    text = "\n".join(f"• {html.escape(reason)}" for reason in visible)
+    if len(reasons) > limit:
+        text += f"\n• и ещё {len(reasons) - limit}"
+    return text
+
+def admin_user_actions_keyboard(actor_id: int, target_id: int) -> InlineKeyboardMarkup:
+    """UX-клавиатура карточки пользователя с учётом ролей и реального состояния."""
+    buttons: list[list[InlineKeyboardButton]] = []
+
+    with db() as conn:
+        real_banned = conn.execute("SELECT 1 FROM banned_users WHERE user_id=?", (target_id,)).fetchone() is not None
+        active_mute = conn.execute(
+            "SELECT muted_until FROM muted_users WHERE user_id=? AND muted_until>?",
+            (target_id, datetime.now().isoformat())
+        ).fetchone() is not None
+        warning_count = conn.execute("SELECT COUNT(*) FROM admin_warnings WHERE user_id=?", (target_id,)).fetchone()[0]
+
+    profile = get_profile_info(target_id) if "get_profile_info" in globals() else {}
+    plus_active = bool(profile.get("plus_active")) if isinstance(profile, dict) else False
+    verified = int(profile.get("verified", 0) or 0) if isinstance(profile, dict) else 0
+
+    buttons.append([
+        InlineKeyboardButton(text="📦 Объявления", callback_data=f"admin_user_listings:{target_id}"),
+        InlineKeyboardButton(text="📌 Заказы", callback_data=f"admin_user_orders:{target_id}"),
+    ])
+
+    buttons.append([
+        InlineKeyboardButton(text="💼 Сделки", callback_data=f"admin_user_deals:{target_id}"),
+        InlineKeyboardButton(text="🛡 Security", callback_data=f"admin_user_security:{target_id}"),
+    ])
+
+    buttons.append([
+        InlineKeyboardButton(text=f"⚠️ Предупреждения {warning_count}", callback_data=f"admin_user_warnings:{target_id}"),
+        InlineKeyboardButton(text="📜 Логи", callback_data=f"admin_user_logs:{target_id}"),
+    ])
+
+    if is_admin(actor_id):
+        buttons.append([
+            InlineKeyboardButton(text="✉️ Написать", callback_data=f"admin_msg_user:{target_id}"),
+            InlineKeyboardButton(text="🔎 Найти другого", callback_data="admin_find_user"),
+        ])
+
+    status_row = []
+    can_verify, _ = can_act(actor_id, target_id, "verify")
+    can_unverify, _ = can_act(actor_id, target_id, "unverify")
+    can_plus, _ = can_act(actor_id, target_id, "grant_plus")
+    can_revoke_plus, _ = can_act(actor_id, target_id, "revoke_plus")
+
+    if can_verify and not verified:
+        status_row.append(InlineKeyboardButton(text="✅ Verified", callback_data=f"admin_verify_user:{target_id}"))
+    if can_unverify and verified:
+        status_row.append(InlineKeyboardButton(text="❌ Снять Verified", callback_data=f"admin_unverify_user:{target_id}"))
+    if status_row:
+        buttons.append(status_row)
+
+    plus_row = []
+    if can_plus:
+        plus_row.append(InlineKeyboardButton(text="💎 Plus 30д", callback_data=f"admin_grant_plus_days:{target_id}:30"))
+        plus_row.append(InlineKeyboardButton(text="💎 Plus 90д", callback_data=f"admin_grant_plus_days:{target_id}:90"))
+    if can_revoke_plus and plus_active:
+        plus_row.append(InlineKeyboardButton(text="🧹 Снять Plus", callback_data=f"admin_revoke_plus:{target_id}"))
+    if plus_row:
+        buttons.append(plus_row)
+
+    punish_row = []
+    can_warn, _ = can_act(actor_id, target_id, "warn")
+    can_mute, _ = can_act(actor_id, target_id, "mute")
+    if can_warn:
+        punish_row.append(InlineKeyboardButton(text="⚠️ Варн", callback_data=f"admin_warn_user:{target_id}"))
+    if can_mute and not active_mute:
+        punish_row.append(InlineKeyboardButton(text="🔇 Мут", callback_data=f"admin_mute_user:{target_id}"))
+    if can_mute and active_mute:
+        punish_row.append(InlineKeyboardButton(text="🔊 Снять мут", callback_data=f"admin_unmute_user:{target_id}"))
+    if punish_row:
+        buttons.append(punish_row)
+
+    ban_row = []
+    can_ban, _ = can_act(actor_id, target_id, "ban")
+    can_unban, _ = can_act(actor_id, target_id, "unban")
+    if can_ban and not real_banned:
+        ban_row.append(InlineKeyboardButton(text="🚫 Бан", callback_data=f"admin_ban_user:{target_id}"))
+    if can_unban and real_banned:
+        ban_row.append(InlineKeyboardButton(text="✅ Разбан", callback_data=f"admin_unban_user:{target_id}"))
+    if ban_row:
+        buttons.append(ban_row)
+
+    role_ok, _ = can_act(actor_id, target_id, "set_role")
+    if role_ok:
+        buttons.append([InlineKeyboardButton(text="👑 Изменить роль", callback_data=f"admin_role_choose:{target_id}")])
+
+    if is_owner(actor_id) and is_staff(target_id):
+        buttons.append([InlineKeyboardButton(text="🚨 Жалобы на админа", callback_data=f"admin_reports_for_admin:{target_id}")])
+
+    buttons.append([
+        InlineKeyboardButton(text="⬅️ Пользователи", callback_data="admin_users_page:0"),
+        InlineKeyboardButton(text="⚙️ Админ-панель", callback_data="admin_panel"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def is_banned(user_id: int) -> bool:
     # Staff не должен блокироваться даже если его случайно занесли в banned_users.
-    # Это защита от ситуации, когда админ/владелец случайно забанил другого staff раньше.
-    if is_staff(user_id):
+    # Дополнительно удаляем ошибочную запись, чтобы проблема не всплывала снова.
+    if is_staff(int(user_id)):
+        try:
+            with db() as conn:
+                deleted = conn.execute("DELETE FROM banned_users WHERE user_id=?", (int(user_id),)).rowcount
+                conn.commit()
+            if deleted:
+                log_admin_action(0, "auto_cleanup_staff_ban", int(user_id), "is_banned skipped protected staff")
+        except Exception:
+            pass
         return False
     with db() as conn:
         return conn.execute("SELECT 1 FROM banned_users WHERE user_id=?", (user_id,)).fetchone() is not None
 
 
 def get_mute(user_id: int):
+    # Owner/admin/moderator не должны блокироваться мутом, даже если старая запись
+    # случайно осталась в базе после прошлых версий кода.
+    if is_staff(int(user_id)):
+        try:
+            with db() as conn:
+                deleted = conn.execute("DELETE FROM muted_users WHERE user_id=?", (int(user_id),)).rowcount
+                conn.commit()
+            if deleted:
+                log_admin_action(0, "auto_cleanup_staff_mute", int(user_id), "get_mute skipped protected staff")
+        except Exception:
+            pass
+        return None
+
     with db() as conn:
         row = conn.execute("SELECT muted_until, reason FROM muted_users WHERE user_id=?", (user_id,)).fetchone()
     if not row:
@@ -790,15 +1464,55 @@ def get_mute(user_id: int):
     return until, row[1]
 
 
-def set_mute(user_id: int, minutes: int, reason: str, muted_by: int = 0) -> None:
-    until = datetime.now() + timedelta(minutes=minutes)
+def is_protected_user(user_id: int) -> bool:
+    """Пользователь, которого нельзя наказывать автоматикой и обычной админкой."""
+    return is_staff(int(user_id)) or is_owner(int(user_id))
+
+
+def can_auto_punish(user_id: int) -> tuple[bool, str]:
+    """Проверка для автомодерации: авто-мут/авто-бан не трогает staff."""
+    user_id = int(user_id)
+    if is_owner(user_id):
+        return False, "Владелец защищён от автоматических наказаний."
+    if is_staff(user_id):
+        return False, "Админ/модератор защищён от автоматических наказаний."
+    return True, ""
+
+
+def set_mute(user_id: int, minutes: int, reason: str, muted_by: int = 0) -> bool:
+    """Безопасная единая точка выдачи мута.
+
+    muted_by=0 — автомодерация.
+    Возвращает True, если мут реально выдан.
+    """
+    user_id = int(user_id)
+    muted_by = int(muted_by or 0)
+
+    if muted_by == 0:
+        ok, block_reason = can_auto_punish(user_id)
+        if not ok:
+            log_admin_action(0, "auto_mute_blocked_protected_user", user_id, block_reason)
+            return False
+    else:
+        ok, block_reason = can_act(muted_by, user_id, "mute")
+        if not ok:
+            log_admin_action(muted_by, "mute_blocked_by_acl", user_id, block_reason)
+            return False
+
+    until = datetime.now() + timedelta(minutes=int(minutes))
     with db() as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO muted_users (user_id, muted_until, reason, muted_by, created_at) VALUES (?, ?, ?, ?, ?)",
+            """
+            INSERT OR REPLACE INTO muted_users
+            (user_id, muted_until, reason, muted_by, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
             (user_id, until.isoformat(), reason, muted_by, datetime.now().isoformat()),
         )
         conn.commit()
 
+    log_admin_action(muted_by, "mute_user", user_id, f"minutes={minutes}; reason={reason}")
+    return True
 
 def register_message_rate(user_id: int) -> tuple[bool, int, str]:
     """Антиспам: возвращает (muted, minutes, reason). Стафф не мутится автоматически."""
@@ -992,17 +1706,21 @@ def seller_stats(user_id: int) -> dict:
 
 def seller_card_text(user_id: int) -> str:
     stats = seller_stats(user_id)
+    trust_badge = trust_public_badge(user_id) if 'trust_public_badge' in globals() else stats.get('status', '🆕 Новый пользователь')
     return f"""
 ━━━━━━━━━━━━━━
 👤 <b>Продавец</b>
 ━━━━━━━━━━━━━━
 
 🆔 ID: <code>{user_id}</code>
+🏷 Профиль: <b>{profile_title(user_id)}</b>
 🔗 Username: @{html.escape(stats['username'])}
+✅ Статус: <b>{trust_public_badge(user_id)}</b>
+📝 Описание: {profile_description_text(user_id)}
 ⭐ Рейтинг: <b>{stats['rating_text']}</b>
 💰 Завершённых продаж: <b>{stats['sales_count']}</b>
 📦 Активных объявлений: <b>{stats['active_listings']}</b>
-🏷 Статус: <b>{stats['status']}</b>
+🏷 Статус: <b>{trust_badge}</b>
 """
 
 
@@ -1029,6 +1747,10 @@ def looks_like_bypass_attempt(text: str) -> bool:
     return any(trigger in clean for trigger in SCAM_TRIGGERS)
 
 async def warn_if_bypass_attempt(sender_id: int, text: str, context: str):
+    # Staff не получает авто-предупреждения Protect.
+    if is_staff(sender_id):
+        return
+
     if not looks_like_bypass_attempt(text):
         return
 
@@ -1065,6 +1787,7 @@ async def warn_if_bypass_attempt(sender_id: int, text: str, context: str):
 {html.escape((text or '')[:800])}
 """
     )
+
 
 def format_chat_history(rows, current_user_id: int | None = None, limit_note: str = "последние сообщения") -> str:
     if not rows:
@@ -1117,6 +1840,49 @@ async def setup_bot_commands():
     ])
 
 
+
+def is_channel_configured() -> bool:
+    """Канал показываем только если ссылка задана в .env."""
+    return TG_CHANNEL_URL.startswith(("http://", "https://", "tg://"))
+
+
+def channel_button(text: str = "📢 Канал LTeam") -> InlineKeyboardButton | None:
+    if not is_channel_configured():
+        return None
+    return InlineKeyboardButton(text=text, url=TG_CHANNEL_URL)
+
+
+def maybe_channel_row(text: str = "📢 Канал LTeam") -> list[InlineKeyboardButton]:
+    btn = channel_button(text)
+    return [btn] if btn else []
+
+
+def channel_promo_text(context: str = "default") -> str:
+    """Мягкий промо-блок. Не агрессивная реклама, а полезная навигация."""
+    if not is_channel_configured():
+        return ""
+
+    name = html.escape(TG_CHANNEL_NAME)
+
+    if context == "home":
+        return f"\n📢 Новости, обновления и полезные анонсы: <b>{name}</b>\n"
+    if context == "about":
+        return f"\n\n📢 Следите за развитием LTeam, обновлениями и новостями проекта в канале: <b>{name}</b>"
+    if context == "listing_sent":
+        return f"\n\n📢 В канале <b>{name}</b> мы публикуем обновления, подборки и новости LTeam."
+    if context == "order_sent":
+        return f"\n\n📢 Следите за обновлениями LTeam и новыми возможностями в канале: <b>{name}</b>."
+    if context == "profile":
+        return f"\n\n📢 Канал проекта: <b>{name}</b>"
+    return f"\n\n📢 Канал LTeam: <b>{name}</b>"
+
+
+def add_channel_button(rows: list[list[InlineKeyboardButton]], text: str = "📢 Канал LTeam") -> list[list[InlineKeyboardButton]]:
+    row = maybe_channel_row(text)
+    if row:
+        rows.append(row)
+    return rows
+
 def main_menu(user_id: int | None = None):
     buttons = []
 
@@ -1126,13 +1892,13 @@ def main_menu(user_id: int | None = None):
         ])
 
     buttons.extend([
-        [InlineKeyboardButton(text="🛒 ОТКРЫТЬ МАРКЕТ", callback_data="market")],
+        [InlineKeyboardButton(text="🔎 Каталог услуг", callback_data="market")],
         [
-            InlineKeyboardButton(text="➕ Разместить", callback_data="create_listing"),
-            InlineKeyboardButton(text="📌 Создать заказ", callback_data="create_order"),
+            InlineKeyboardButton(text="📦 Разместить услугу", callback_data="create_listing"),
+            InlineKeyboardButton(text="🧾 Создать заказ", callback_data="create_order"),
         ],
         [
-            InlineKeyboardButton(text="📦 Мои объявления", callback_data="my_listings"),
+            InlineKeyboardButton(text="📦 Мои размещения", callback_data="my_listings"),
             InlineKeyboardButton(text="💬 Мои сделки", callback_data="my_deals"),
         ],
         [
@@ -1145,10 +1911,95 @@ def main_menu(user_id: int | None = None):
         ],
     ])
 
+    add_channel_button(buttons, "📢 Канал LTeam")
+
     if user_id and is_staff(user_id):
         buttons.append([InlineKeyboardButton(text="⚙️ Админ-панель", callback_data="admin_panel")])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def home_market_keyboard() -> InlineKeyboardMarkup | None:
+    """Кнопка MiniApp прямо под приветственным баннером."""
+    if not WEBAPP_URL.startswith("http"):
+        return None
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(
+            text="🚀 Открыть LTeam Market",
+            web_app=WebAppInfo(url=WEBAPP_URL),
+        )
+    ]])
+
+
+def lteam_reply_menu(user_id: int | None = None) -> ReplyKeyboardMarkup:
+    """Постоянное нижнее меню Telegram.
+
+    Это не заменяет inline-кнопки внутри экранов, а даёт быстрый доступ
+    к главным разделам из любой точки бота.
+    """
+    rows = [
+        [KeyboardButton(text="🔎 Каталог услуг"), KeyboardButton(text="🧾 Заказы")],
+        [KeyboardButton(text="📦 Разместить"), KeyboardButton(text="👤 Профиль")],
+        [KeyboardButton(text="🛡 Гарант"), KeyboardButton(text="⚙️ Меню")],
+    ]
+    if is_channel_configured():
+        rows.append([KeyboardButton(text="📢 Канал LTeam")])
+    if user_id and is_staff(user_id):
+        rows.append([KeyboardButton(text="🛠 Админ-панель")])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, input_field_placeholder="Выберите раздел LTeam")
+
+
+def section_reply_menu(back_text: str = "⬅️ Назад") -> ReplyKeyboardMarkup:
+    """Временное нижнее меню раздела: оставляет пользователю понятную кнопку возврата."""
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=back_text)]],
+        resize_keyboard=True,
+        input_field_placeholder="Нажмите «Назад», чтобы вернуться в главное меню",
+    )
+
+
+async def clear_nav_menu_message(user_id: int) -> None:
+    row = NAV_MENU_MESSAGES.pop(int(user_id), None)
+    if not row:
+        return
+    chat_id, message_id = row
+    try:
+        await bot.delete_message(chat_id, message_id)
+    except Exception:
+        pass
+
+
+async def set_reply_menu_hint_for_message(
+    message: Message,
+    reply_markup: ReplyKeyboardMarkup,
+    text: str = "🧭 Для возврата используйте кнопку «⬅️ Назад» ниже.",
+) -> None:
+    await clear_nav_menu_message(message.from_user.id)
+    try:
+        sent = await message.answer(text, reply_markup=reply_markup, disable_notification=True)
+    except TypeError:
+        sent = await message.answer(text, reply_markup=reply_markup)
+    NAV_MENU_MESSAGES[message.from_user.id] = (sent.chat.id, sent.message_id)
+
+
+async def set_reply_menu_hint_for_call(
+    call: CallbackQuery,
+    reply_markup: ReplyKeyboardMarkup,
+    text: str = "🧭 Для возврата используйте кнопку ниже.",
+) -> None:
+    await clear_nav_menu_message(call.from_user.id)
+    try:
+        sent = await bot.send_message(call.message.chat.id, text, reply_markup=reply_markup, disable_notification=True)
+    except TypeError:
+        sent = await bot.send_message(call.message.chat.id, text, reply_markup=reply_markup)
+    NAV_MENU_MESSAGES[call.from_user.id] = (sent.chat.id, sent.message_id)
+
+
+def section_back_keyboard(*, home: bool = True) -> InlineKeyboardMarkup:
+    rows = []
+    if home:
+        rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def back_home():
@@ -1172,6 +2023,8 @@ def listings_keyboard(rows):
 
 
 async def send_home(message: Message):
+    await clear_nav_menu_message(message.from_user.id)
+
     text = """
 ━━━━━━━━━━━━━━
 🚀 <b>LTeam Market</b>
@@ -1179,23 +2032,35 @@ async def send_home(message: Message):
 
 Маркет цифровых услуг, заказов и безопасных сделок через гаранта LTeam.
 
-🛒 Маркет — найти услугу или товар
-➕ Разместить — создать своё объявление
-📌 Создать заказ — найти исполнителя под задачу
+🔎 <b>Каталог услуг</b> — найти исполнителя или цифровой товар
+🧾 <b>Заказы</b> — найти задачу или создать свою
+📦 <b>Разместить</b> — опубликовать услугу/товар
+👤 <b>Профиль</b> — баланс, сделки, выводы
 
-Выберите действие:
+Нижнее меню включено. Выберите раздел кнопками под полем ввода.
 """
 
+    text += channel_promo_text("home")
 
     if os.path.exists(BANNER_PATH):
         await message.answer_photo(
             FSInputFile(BANNER_PATH),
             caption=text,
-            reply_markup=main_menu(message.from_user.id),
+            reply_markup=home_market_keyboard(),
             parse_mode="HTML",
         )
+        await set_reply_menu_hint_for_message(
+            message,
+            lteam_reply_menu(message.from_user.id),
+            text="⬇️ Основные разделы доступны в нижнем меню.",
+        )
     else:
-        await screen_answer(message,text, reply_markup=main_menu(message.from_user.id), parse_mode="HTML")
+        await screen_answer(message, text, reply_markup=home_market_keyboard(), parse_mode="HTML")
+        await set_reply_menu_hint_for_message(
+            message,
+            lteam_reply_menu(message.from_user.id),
+            text="⬇️ Основные разделы доступны в нижнем меню.",
+        )
 
 
 @dp.message(CommandStart())
@@ -1267,6 +2132,237 @@ async def command_rules(message: Message):
     )
 
 
+# ===== НИЖНЕЕ МЕНЮ LTEAM =====
+
+async def show_market_from_message(message: Message):
+    with db() as conn:
+        total = conn.execute("SELECT COUNT(*) FROM listings WHERE status='active'").fetchone()[0]
+        new_count = conn.execute("SELECT COUNT(*) FROM listings WHERE status='active' AND id >= (SELECT COALESCE(MAX(id),0)-20 FROM listings)").fetchone()[0]
+
+    await screen_answer(
+        message,
+        f"""
+━━━━━━━━━━━━━━
+🔎 <b>Каталог услуг</b>
+━━━━━━━━━━━━━━
+
+Найдите услугу, цифровой товар или исполнителя под вашу задачу.
+
+📦 Активных объявлений: <b>{total}</b>
+🆕 Новых объявлений: <b>{new_count}</b>
+
+Выберите удобный способ поиска:
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔍 Поиск", callback_data="search_start"), InlineKeyboardButton(text="🎯 Подбор", callback_data="market_filter")],
+            [InlineKeyboardButton(text="📂 Категории", callback_data="market_categories"), InlineKeyboardButton(text="🆕 Новые", callback_data="market_new")],
+            [InlineKeyboardButton(text="🔥 ТОП", callback_data="market_top"), InlineKeyboardButton(text="🛡 LTeam Verified", callback_data="market_verified")],
+            [InlineKeyboardButton(text="📦 Разместить услугу", callback_data="create_listing")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="home")],
+        ]),
+        parse_mode="HTML",
+    )
+
+
+async def show_orders_from_message(message: Message):
+    await screen_answer(
+        message,
+        """
+━━━━━━━━━━━━━━
+🧾 <b>Заказы клиентов</b>
+━━━━━━━━━━━━━━
+
+Здесь заказчики публикуют задачи, а исполнители откликаются.
+
+Примеры:
+• нужен Telegram-бот
+• нужен логотип
+• нужен монтаж
+• нужна настройка AI
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Смотреть заказы", callback_data="orders_list")],
+            [InlineKeyboardButton(text="🧾 Создать заказ", callback_data="create_order")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="home")],
+        ]),
+        parse_mode="HTML",
+    )
+
+
+async def show_place_from_message(message: Message):
+    await screen_answer(
+        message,
+        """
+━━━━━━━━━━━━━━
+📦 <b>Размещение услуги</b>
+━━━━━━━━━━━━━━
+
+Создайте объявление, если вы хотите продавать услугу, цифровой товар, шаблон, бота или доступ.
+
+Что лучше писать:
+• что именно вы делаете
+• что получит покупатель
+• срок выполнения
+• что нужно от заказчика
+
+Реквизиты для выплаты указывать не нужно — они запрашиваются только при выводе средств.
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📦 Создать размещение", callback_data="create_listing")],
+            [InlineKeyboardButton(text="👀 Мои объявления", callback_data="my_listings")],
+            [InlineKeyboardButton(text="📜 Правила размещения", callback_data="rules")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="home")],
+        ]),
+        parse_mode="HTML",
+    )
+
+
+async def show_guarantee_from_message(message: Message):
+    await screen_answer(
+        message,
+        f"""
+━━━━━━━━━━━━━━
+🛡 <b>Гарант LTeam</b>
+━━━━━━━━━━━━━━
+
+1. Покупатель и исполнитель обсуждают задачу в чате LTeam.
+2. Исполнитель выставляет итоговую цену.
+3. Покупатель подтверждает цену.
+4. Админ проверяет сделку и разрешает оплату.
+5. Покупатель оплачивает по реквизитам LTeam.
+6. Деньги замораживаются до выполнения.
+7. После подтверждения выполнения деньги идут на баланс исполнителя.
+
+Комиссия сервиса: <b>{COMMISSION_PERCENT}%</b>.
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📜 Правила", callback_data="rules"), InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="home")],
+        ]),
+        parse_mode="HTML",
+    )
+
+
+@dp.message(F.text.in_({"⬅️ Назад", "🔙 Назад"}))
+async def reply_menu_back(message: Message, state: FSMContext):
+    await state.clear()
+    save_user(message)
+    await send_home(message)
+
+
+@dp.message(F.text.in_({"🔎 Каталог услуг", "🛒 Маркет"}))
+async def reply_menu_market(message: Message, state: FSMContext):
+    await state.clear()
+    save_user(message)
+    await show_market_from_message(message)
+    await set_reply_menu_hint_for_message(message, section_reply_menu(), "🧭 Открыт раздел «Каталог услуг». Для возврата нажмите «⬅️ Назад» ниже.")
+
+
+@dp.message(F.text.in_({"🧾 Заказы", "📌 Заказы"}))
+async def reply_menu_orders(message: Message, state: FSMContext):
+    await state.clear()
+    save_user(message)
+    await show_orders_from_message(message)
+    await set_reply_menu_hint_for_message(message, section_reply_menu(), "🧭 Открыт раздел «Заказы». Для возврата нажмите «⬅️ Назад» ниже.")
+
+
+@dp.message(F.text.in_({"📦 Разместить", "➕ Разместить"}))
+async def reply_menu_place(message: Message, state: FSMContext):
+    await state.clear()
+    save_user(message)
+    await show_place_from_message(message)
+    await set_reply_menu_hint_for_message(message, section_reply_menu(), "🧭 Открыт раздел «Разместить». Для возврата нажмите «⬅️ Назад» ниже.")
+
+
+@dp.message(F.text == "👤 Профиль")
+async def reply_menu_profile(message: Message, state: FSMContext):
+    await state.clear()
+    save_user(message)
+    ensure_profile_tables()
+    await screen_answer(
+        message,
+        build_beautiful_profile_text(message.from_user.id),
+        reply_markup=beautiful_profile_keyboard(message.from_user.id),
+        parse_mode="HTML",
+    )
+    await set_reply_menu_hint_for_message(message, section_reply_menu(), "🧭 Открыт раздел «Профиль». Для возврата нажмите «⬅️ Назад» ниже.")
+
+
+@dp.message(F.text == "🛡 Гарант")
+async def reply_menu_guarantee(message: Message, state: FSMContext):
+    await state.clear()
+    save_user(message)
+    await show_guarantee_from_message(message)
+    await set_reply_menu_hint_for_message(message, section_reply_menu(), "🧭 Открыт раздел «Гарант». Для возврата нажмите «⬅️ Назад» ниже.")
+
+
+@dp.message(F.text == "⚙️ Меню")
+async def reply_menu_full(message: Message, state: FSMContext):
+    await state.clear()
+    save_user(message)
+    await screen_answer(
+        message,
+        """
+━━━━━━━━━━━━━━
+⚙️ <b>Меню LTeam</b>
+━━━━━━━━━━━━━━
+
+Выберите раздел:
+""",
+        reply_markup=main_menu(message.from_user.id),
+        parse_mode="HTML",
+    )
+    await set_reply_menu_hint_for_message(message, section_reply_menu(), "🧭 Открыт раздел «Меню». Для возврата нажмите «⬅️ Назад» ниже.")
+
+
+
+@dp.message(F.text == "📢 Канал LTeam")
+async def reply_menu_channel(message: Message, state: FSMContext):
+    await state.clear()
+    save_user(message)
+    rows = []
+    add_channel_button(rows, "📢 Перейти в канал")
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="home")])
+    await screen_answer(
+        message,
+        f"""
+━━━━━━━━━━━━━━
+📢 <b>Канал LTeam</b>
+━━━━━━━━━━━━━━
+
+В канале публикуем обновления проекта, новости маркетплейса, полезные материалы и важные объявления для пользователей.
+{channel_promo_text()}
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        parse_mode="HTML",
+    )
+    await set_reply_menu_hint_for_message(message, section_reply_menu(), "🧭 Открыт раздел «Канал LTeam». Для возврата нажмите «⬅️ Назад» ниже.")
+
+@dp.message(F.text == "🛠 Админ-панель")
+async def reply_menu_admin(message: Message, state: FSMContext):
+    await state.clear()
+    save_user(message)
+    if not is_staff(message.from_user.id):
+        await screen_answer(message, "Нет доступа.", reply_markup=main_menu(message.from_user.id), parse_mode="HTML")
+        return
+    await screen_answer(
+        message,
+        """
+━━━━━━━━━━━━━━
+🛠 <b>Админ-панель</b>
+━━━━━━━━━━━━━━
+
+Откройте админ-панель через кнопку ниже.
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🛠 Открыть админ-панель", callback_data="admin_panel")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="home")],
+        ]),
+        parse_mode="HTML",
+    )
+    await set_reply_menu_hint_for_message(message, section_reply_menu(), "🧭 Открыт раздел «Админ-панель». Для возврата нажмите «⬅️ Назад» ниже.")
+
+
 @dp.callback_query(F.data == "home")
 async def home(call: CallbackQuery):
     await show_screen(
@@ -1281,6 +2377,7 @@ async def home(call: CallbackQuery):
         reply_markup=main_menu(call.from_user.id),
         parse_mode="HTML",
     )
+    await set_reply_menu_hint_for_call(call, lteam_reply_menu(call.from_user.id), "🏠 Главное меню снова доступно на нижних кнопках.")
     await call.answer()
 
 
@@ -1289,15 +2386,28 @@ async def about_company(call: CallbackQuery):
     await show_screen(
         call,
         """
+━━━━━━━━━━━━━━
 ℹ️ <b>О компании LTeam</b>
+━━━━━━━━━━━━━━
 
-LTeam — команда, которая создаёт Telegram-ботов, Mini App, цифровые услуги и свои проекты.
+<b>LTeam Market</b> — Telegram-маркетплейс цифровых услуг, заказов и безопасных сделок.
 
-Сейчас основной продукт — <b>LTeam Market</b>: площадка цифровых услуг и товаров с безопасной сделкой через гаранта.
+Что есть внутри:
+• 📦 размещение услуг и цифровых товаров
+• 🧾 заказы от клиентов
+• 💬 безопасные чаты внутри бота
+• 🛡 гарант LTeam
+• ⭐ отзывы и рейтинг
+• 💸 баланс исполнителя и вывод средств
 
-Наша цель — сделать сеть полезных ботов, развить соцсети, собрать портфолио и выйти на рынок заказов.
-""",
-        reply_markup=back_home(),
+Наша цель — построить удобную экосистему Telegram-сервисов, где заказчик и исполнитель могут работать безопасно.
+""" + channel_promo_text("about"),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=add_channel_button([
+            [InlineKeyboardButton(text="🛡 Как работает гарант", callback_data="guarantee")],
+            [InlineKeyboardButton(text="📜 Правила", callback_data="rules"), InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+        ], "📢 Перейти в канал")),
+        parse_mode="HTML",
     )
     await call.answer()
 
@@ -1307,18 +2417,33 @@ async def rules(call: CallbackQuery):
     await show_screen(
         call,
         f"""
+━━━━━━━━━━━━━━
 📜 <b>Правила LTeam Market</b>
+━━━━━━━━━━━━━━
 
-1. Не переходите в личные сообщения для сделки, если заказ начался через LTeam.
-2. Не отправляйте оплату напрямую продавцу или покупателю.
-3. Оплата проходит только по реквизитам LTeam, которые показывает бот.
-4. Комиссия сервиса: <b>{COMMISSION_PERCENT}%</b>.
-5. Запрещены обман, спам, фейковые чеки и запрещённые товары/услуги.
-6. При проблеме открывайте спор или пишите в поддержку.
+<b>1. Сделки только через LTeam</b>
+Не уводите заказ в личные сообщения и не просите оплату напрямую.
 
-Нарушение правил может привести к блокировке аккаунта в боте.
+<b>2. Оплата только по реквизитам LTeam</b>
+Реквизиты появляются только после проверки админом.
+
+<b>3. Комиссия сервиса</b>
+Комиссия LTeam: <b>{COMMISSION_PERCENT}%</b>.
+
+<b>4. Запрещено</b>
+Обман, фейковые чеки, спам, запрещённые товары/услуги, обход гаранта.
+
+<b>5. Споры</b>
+Если возникла проблема — открывайте спор или пишите в поддержку.
+
+Нарушения могут привести к предупреждению, муту или блокировке.
 """,
-        reply_markup=back_home(),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🛡 Как работает гарант", callback_data="guarantee")],
+            [InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+        ]),
+        parse_mode="HTML",
     )
     await call.answer()
 
@@ -1329,83 +2454,148 @@ async def admin_panel(call: CallbackQuery):
         await call.answer("Нет доступа", show_alert=True)
         return
 
+    ensure_admin_tables()
+    now = datetime.now()
+    day_ago = now - timedelta(days=1)
+
     with db() as conn:
         users_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        active_listings = conn.execute("SELECT COUNT(*) FROM listings WHERE status='active'").fetchone()[0]
+        active_orders = conn.execute("SELECT COUNT(*) FROM orders WHERE status='active'").fetchone()[0]
         listing_moderation = conn.execute("SELECT COUNT(*) FROM listings WHERE status='moderation'").fetchone()[0]
         order_moderation = conn.execute("SELECT COUNT(*) FROM orders WHERE status='moderation'").fetchone()[0]
         active_deals = conn.execute("SELECT COUNT(*) FROM deals WHERE status NOT IN ('completed', 'cancelled', 'deleted')").fetchone()[0]
         waiting_payment = conn.execute("SELECT COUNT(*) FROM deals WHERE status='waiting_admin_confirm'").fetchone()[0]
         waiting_payout = conn.execute("SELECT COUNT(*) FROM deals WHERE status='waiting_payout'").fetchone()[0]
+        try:
+            ensure_finance_tables()
+            pending_withdrawals = conn.execute("SELECT COUNT(*) FROM withdrawal_requests WHERE status='pending'").fetchone()[0]
+        except Exception:
+            pending_withdrawals = 0
+        try:
+            ensure_pro_tables()
+            open_disputes = conn.execute("SELECT COUNT(*) FROM deal_disputes WHERE status='open'").fetchone()[0]
+        except Exception:
+            open_disputes = 0
         reports_count = conn.execute("SELECT COUNT(*) FROM reports WHERE COALESCE(status, 'new')='new'").fetchone()[0]
         tickets_count = conn.execute("SELECT COUNT(*) FROM tickets WHERE status='open'").fetchone()[0]
+        pending_requests = conn.execute("SELECT COUNT(*) FROM admin_action_requests WHERE status='pending'").fetchone()[0]
+        security_24h = conn.execute("SELECT COUNT(*) FROM security_events WHERE created_at>=?", (day_ago.isoformat(),)).fetchone()[0]
+        active_mutes = conn.execute("SELECT COUNT(*) FROM muted_users WHERE muted_until>?", (now.isoformat(),)).fetchone()[0]
+        active_bans = conn.execute("SELECT COUNT(*) FROM banned_users").fetchone()[0]
+        warnings_total = conn.execute("SELECT COUNT(*) FROM admin_warnings").fetchone()[0]
+        plus_active = conn.execute("SELECT COUNT(*) FROM user_profile_settings WHERE plus_until>?", (now.isoformat(),)).fetchone()[0] if table_exists("user_profile_settings") else 0
+        verified_total = conn.execute("SELECT COUNT(*) FROM users WHERE COALESCE(verified,0)=1").fetchone()[0]
         turnover = conn.execute("SELECT COALESCE(SUM(amount), 0) FROM deals WHERE status IN ('completed', 'waiting_payout')").fetchone()[0]
         commission = conn.execute("SELECT COALESCE(SUM(commission), 0) FROM deals WHERE status='completed'").fetchone()[0]
 
     moderation_total = listing_moderation + order_moderation
+    danger_total = reports_count + security_24h + pending_requests + open_disputes
+
+    buttons = [
+        [
+            InlineKeyboardButton(text="🔎 Быстрый поиск", callback_data="admin_find_user"),
+            InlineKeyboardButton(text=f"👥 Пользователи {users_count}", callback_data="admin_users_page:0"),
+        ],
+        [
+            InlineKeyboardButton(text=f"🛡 Security {security_24h}", callback_data="admin_security_center"),
+            InlineKeyboardButton(text=f"🚨 Жалобы {reports_count}", callback_data="admin_reports"),
+        ],
+        [
+            InlineKeyboardButton(text=f"⏳ Модерация {moderation_total}", callback_data="admin_moderation"),
+            InlineKeyboardButton(text=f"🆘 Поддержка {tickets_count}", callback_data="admin_tickets_v2"),
+        ],
+        [
+            InlineKeyboardButton(text=f"💼 Сделки {active_deals}", callback_data="admin_deals_center"),
+            InlineKeyboardButton(text=f"🚨 Споры {open_disputes}", callback_data="admin_disputes"),
+        ],
+        [
+            InlineKeyboardButton(text="💰 Финансы", callback_data="admin_finance_v2"),
+            InlineKeyboardButton(text=f"💸 Выводы {pending_withdrawals}", callback_data="admin_withdrawals"),
+        ],
+        [
+            InlineKeyboardButton(text=f"🧾 Чеки {waiting_payment}", callback_data="admin_deals_center"),
+            InlineKeyboardButton(text=f"💼 Выплаты {waiting_payout}", callback_data="admin_deals_center"),
+        ],
+        [
+            InlineKeyboardButton(text=f"🚫 Баны {active_bans}", callback_data="admin_bans_list"),
+            InlineKeyboardButton(text=f"🔇 Муты {active_mutes}", callback_data="admin_mutes_list_v5"),
+        ],
+        [
+            InlineKeyboardButton(text=f"⚠️ Варны {warnings_total}", callback_data="admin_warnings_list_v5"),
+            InlineKeyboardButton(text=f"📨 Заявки {pending_requests}", callback_data="admin_requests_list"),
+        ],
+    ]
+
+    if is_admin(call.from_user.id):
+        buttons.append([
+            InlineKeyboardButton(text=f"💎 Plus {plus_active}", callback_data="admin_plus_center_v5"),
+            InlineKeyboardButton(text=f"✅ Verified {verified_total}", callback_data="admin_verified_list_v5"),
+        ])
+        buttons.append([
+            InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast_start"),
+            InlineKeyboardButton(text="📜 Логи", callback_data="admin_logs_page:0"),
+        ])
+
+    if is_owner(call.from_user.id):
+        buttons.append([
+            InlineKeyboardButton(text="👑 Роли", callback_data="admin_roles_panel"),
+            InlineKeyboardButton(text="🛡 Staff Safety", callback_data="admin_staff_safety"),
+        ])
+        buttons.append([
+            InlineKeyboardButton(text="🧹 Staff cleanup", callback_data="admin_cleanup_staff_punishments"),
+        ])
+
+    buttons.append([InlineKeyboardButton(text="⬅️ Главное меню", callback_data="home")])
+
+    health = "🟢 Норма"
+    if danger_total >= 10:
+        health = "🔴 Требует внимания"
+    elif danger_total >= 4:
+        health = "🟠 Есть задачи"
+
     await show_screen(
         call,
         f"""
 ━━━━━━━━━━━━━━
-⚙️ <b>Админ-центр LTeam</b>
+⚙️ <b>LTeam Admin Center V5</b>
 ━━━━━━━━━━━━━━
 
-Ваш доступ: <b>{role_badge(call.from_user.id)}</b>
+👤 Вы: <b>{role_badge(call.from_user.id)}</b>
+📌 Состояние: <b>{health}</b>
 
-🧭 <b>Главное</b>
-👥 Пользователей: <b>{users_count}</b>
-⏳ На модерации: <b>{moderation_total}</b>
-   • объявлений: <b>{listing_moderation}</b>
-   • заказов: <b>{order_moderation}</b>
+<b>Что делать сначала:</b>
+1) 🚨 Жалобы и Security
+2) 📨 Заявки
+3) 💼 Сделки/выплаты
+4) 👥 Пользователи
 
-💰 <b>Сделки и финансы</b>
-🧾 Чеков на проверке: <b>{waiting_payment}</b>
-💸 Ожидают выплаты: <b>{waiting_payout}</b>
-🤝 Активных сделок: <b>{active_deals}</b>
-📈 Оборот: <b>{turnover}₽</b>
-💵 Комиссия LTeam: <b>{commission}₽</b>
+📊 <b>Продукт</b>
+• Пользователей: <b>{users_count}</b>
+• Активных объявлений: <b>{active_listings}</b>
+• Активных заказов: <b>{active_orders}</b>
+• На модерации: <b>{moderation_total}</b>
 
 🛡 <b>Безопасность</b>
-🚨 Новых жалоб: <b>{reports_count}</b>
-🆘 Обращений в поддержку: <b>{tickets_count}</b>
+• Жалобы: <b>{reports_count}</b>
+• Открытые споры: <b>{open_disputes}</b>
+• Security events за 24ч: <b>{security_24h}</b>
+• Активные баны/муты: <b>{active_bans}</b> / <b>{active_mutes}</b>
+• Предупреждений всего: <b>{warnings_total}</b>
+• Заявки на согласование: <b>{pending_requests}</b>
+
+💎 <b>Статусы</b>
+• LTeam Plus активных: <b>{plus_active}</b>
+• Verified: <b>{verified_total}</b>
+
+💼 <b>Сделки</b>
+• Активные: <b>{active_deals}</b>
+• Ожидают оплату: <b>{waiting_payment}</b>
+• Ожидают выплату: <b>{waiting_payout}</b>
+• Оборот: <b>{turnover}₽</b>
+• Комиссия завершённых: <b>{commission}₽</b>
 """,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"⏳ Модерация ({moderation_total})", callback_data="admin_moderation")],
-            [InlineKeyboardButton(text=f"📦 Объявления ({listing_moderation})", callback_data="admin_mod_listings"), InlineKeyboardButton(text=f"📌 Заказы ({order_moderation})", callback_data="admin_mod_orders")],
-            [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats"), InlineKeyboardButton(text="💰 Финансы 2.0", callback_data="admin_finance_v2")],
-            [InlineKeyboardButton(text="🤝 Сделки", callback_data="admin_deals_center"), InlineKeyboardButton(text="💸 Выплаты", callback_data="admin_deals_payouts")],
-            [InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users_page:0"), InlineKeyboardButton(text="🔎 Найти", callback_data="admin_find_user")],
-            [InlineKeyboardButton(text=f"🛡 Безопасность ({reports_count})", callback_data="admin_security_center"), InlineKeyboardButton(text="👑 Роли", callback_data="admin_roles_panel")],
-            [InlineKeyboardButton(text="💰 Продвижение на проверке", callback_data="admin_promo_pending")],
-            [InlineKeyboardButton(text="🚫 Забанить", callback_data="admin_ban_start"), InlineKeyboardButton(text="✅ Разбанить", callback_data="admin_unban_start")],
-            [InlineKeyboardButton(text="👀 Чаты", callback_data="admin_chat_hint"), InlineKeyboardButton(text="📢 Рассылка 2.0", callback_data="admin_broadcast_target")],
-            [InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_panel")],
-            [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="home")],
-        ]),
-        parse_mode="HTML",
-    )
-    await call.answer()
-
-@dp.callback_query(F.data == "admin_chat_hint")
-async def admin_chat_hint(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
-        await call.answer("Нет доступа", show_alert=True)
-        return
-    await show_screen(
-        call,
-        """
-━━━━━━━━━━━━━━
-👀 <b>Просмотр чатов</b>
-━━━━━━━━━━━━━━
-
-Команды для админов:
-<code>/deal_chat 15</code> — чат сделки
-<code>/order_chat 7</code> — чат заказа
-
-Также кнопки просмотра чата доступны внутри карточек сделок и заказов.
-""",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")]
-        ]),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
         parse_mode="HTML",
     )
     await call.answer()
@@ -1416,8 +2606,7 @@ async def admin_ban_start(call: CallbackQuery, state: FSMContext):
     if not is_admin(call.from_user.id):
         await call.answer("Нет доступа", show_alert=True)
         return
-    await state.set_state(AdminBanState.user_id)
-    await show_screen(call, "🚫 Отправьте Telegram ID пользователя, которого нужно забанить:")
+    await ask_admin_user_query(call, state, "ban", "🚫 <b>Бан пользователя</b>", "admin_panel")
     await call.answer()
 
 
@@ -1426,10 +2615,15 @@ async def admin_ban_save(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         await state.clear()
         return
-    if not message.text or not message.text.strip().isdigit():
-        await screen_answer(message,"Отправьте только числовой ID.")
+    rows = find_users_for_admin(message.text or "")
+    if not rows:
+        await screen_answer(message, "❌ Пользователь не найден. Введите ID, @username или ник.", parse_mode="HTML")
         return
-    user_id = int(message.text.strip())
+    if len(rows) > 1:
+        await state.clear()
+        await screen_answer(message, "Найдено несколько пользователей:", reply_markup=user_pick_keyboard(rows, "ban"), parse_mode="HTML")
+        return
+    user_id = int(rows[0][0])
     ok, reason = can_act(message.from_user.id, user_id, "ban")
     if not ok:
         await state.clear()
@@ -1451,8 +2645,7 @@ async def admin_unban_start(call: CallbackQuery, state: FSMContext):
     if not is_admin(call.from_user.id):
         await call.answer("Нет доступа", show_alert=True)
         return
-    await state.set_state(AdminUnbanState.user_id)
-    await show_screen(call, "✅ Отправьте Telegram ID пользователя, которого нужно разбанить:")
+    await ask_admin_user_query(call, state, "unban", "✅ <b>Разбан пользователя</b>", "admin_panel")
     await call.answer()
 
 
@@ -1461,10 +2654,15 @@ async def admin_unban_save(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         await state.clear()
         return
-    if not message.text or not message.text.strip().isdigit():
-        await screen_answer(message,"Отправьте только числовой ID.")
+    rows = find_users_for_admin(message.text or "")
+    if not rows:
+        await screen_answer(message, "❌ Пользователь не найден. Введите ID, @username или ник.", parse_mode="HTML")
         return
-    user_id = int(message.text.strip())
+    if len(rows) > 1:
+        await state.clear()
+        await screen_answer(message, "Найдено несколько пользователей:", reply_markup=user_pick_keyboard(rows, "unban"), parse_mode="HTML")
+        return
+    user_id = int(rows[0][0])
     ok, reason = can_act(message.from_user.id, user_id, "unban")
     if not ok:
         await state.clear()
@@ -1510,6 +2708,63 @@ async def market(call: CallbackQuery):
     with db() as conn:
         total = conn.execute("SELECT COUNT(*) FROM listings WHERE status='active'").fetchone()[0]
         new_count = conn.execute("SELECT COUNT(*) FROM listings WHERE status='active' AND id >= (SELECT COALESCE(MAX(id),0)-20 FROM listings)").fetchone()[0]
+
+    await show_screen(
+        call,
+        f"<b>LTeam Market</b>\n━━━━━━━━━━━━\n\n"
+        f"Активных объявлений: <b>{total}</b>\n"
+        f"Новых объявлений: <b>{new_count}</b>\n\n"
+        "Найдите услугу, товар или исполнителя.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Поиск", callback_data="search_start"), InlineKeyboardButton(text="Подбор", callback_data="market_filter")],
+            [InlineKeyboardButton(text="Категории", callback_data="market_categories"), InlineKeyboardButton(text="Новые", callback_data="market_new")],
+            [InlineKeyboardButton(text="Назад", callback_data="home")],
+        ]),
+        parse_mode="HTML",
+    )
+    await call.answer()
+    return
+
+    progress = {
+        "discussion": "1/5 — обсуждение условий",
+        "waiting_final_price": "1/5 — ожидается итоговая цена",
+        "waiting_buyer_price_confirm": "1/5 — покупатель подтверждает цену",
+        "waiting_admin_payment_approval": "2/5 — админ проверяет сделку",
+        "waiting_payment": "2/5 — ожидается оплата покупателя",
+        "waiting_receipt": "2/5 — ожидается чек",
+        "waiting_admin_confirm": "2/5 — админ проверяет поступление",
+        "in_work": "3/5 — исполнитель выполняет заказ",
+        "waiting_buyer_confirm": "4/5 — покупатель проверяет результат",
+        "waiting_payout": "5/5 — ожидается ручная выплата",
+        "completed": "5/5 — сделка завершена",
+        "payment_rejected": "оплата требует повторной проверки",
+        "dispute_open": "спор рассматривает администрация",
+    }.get(status, "статус обновляется")
+
+    await show_screen(
+        call,
+        f"""
+<b>Сделка #{deal_id}</b>
+━━━━━━━━━━━━━━━━
+
+<b>{html.escape(title or 'Без названия')}</b>
+Источник: {'заказ' if source_type == 'order' else 'объявление'}
+
+<b>Этап:</b> {progress}
+Цена: <b>{amount} ₽</b>
+Комиссия LTeam: <b>{commission} ₽</b>
+Исполнителю после завершения: <b>{payout} ₽</b>
+
+Покупатель: <code>{buyer_id}</code>
+Исполнитель: <code>{seller_id}</code>
+
+<i>Оплата проходит через реквизиты администратора LTeam.</i>
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode="HTML",
+    )
+    await call.answer()
+    return
 
     await show_screen(call,
         f"""
@@ -2148,20 +3403,21 @@ async def view_listing(call: CallbackQuery):
         ).fetchone()
 
     fav_text = "⭐ Убрать из избранного" if fav else "⭐ В избранное"
-    safe_title = html.escape(title or "Без названия")
-    safe_category = html.escape(category or "—")
-    safe_item_type = html.escape(item_type or "—")
-    safe_condition = html.escape(condition or "—")
-    safe_description = html.escape(description or "Без описания")
-    safe_delivery_time = html.escape(delivery_time or "Не указан")
 
-    buttons = [
-        [InlineKeyboardButton(text="🛒 Купить через гаранта", callback_data=f"buy:{listing_id}")],
+    buttons = []
+    if call.from_user.id != seller_id:
+        buttons.append([InlineKeyboardButton(text="💬 Обсудить заказ", callback_data=f"ask_seller:{listing_id}")])
+        buttons.append([InlineKeyboardButton(text="🛡 Сделка через гаранта", callback_data=f"ask_seller:{listing_id}")])
+    else:
+        buttons.append([InlineKeyboardButton(text="👁 Как видят покупатели", callback_data=f"view_listing:{listing_id}")])
+
+    buttons.extend([
+        [InlineKeyboardButton(text="⭐ Отзывы продавца", callback_data=f"listing_reviews:{seller_id}:{listing_id}")],
         [InlineKeyboardButton(text="👤 Профиль продавца", callback_data=f"seller_profile:{seller_id}")],
-        [InlineKeyboardButton(text="💬 Написать через бота", callback_data=f"ask_seller:{listing_id}")],
         [InlineKeyboardButton(text=fav_text, callback_data=f"fav:{listing_id}")],
         [InlineKeyboardButton(text="🚨 Пожаловаться", callback_data=f"report:{listing_id}")],
-    ]
+    ])
+
     if call.from_user.id == seller_id:
         buttons.append([InlineKeyboardButton(text="🚀 Продвинуть объявление", callback_data=f"promo_menu:{listing_id}")])
         buttons.append([
@@ -2178,28 +3434,9 @@ async def view_listing(call: CallbackQuery):
         ])
     buttons.append([InlineKeyboardButton(text="⬅️ Назад в маркет", callback_data="market")])
 
-    await show_screen(call,
-        f"""
-{seller_card_text(seller_id)}
-━━━━━━━━━━━━━━
-📦 <b>Объявление</b>
-━━━━━━━━━━━━━━
-
-<b>{safe_title}</b>
-
-💰 Цена: <b>{price}₽</b>
-📂 Категория: <b>{safe_category}</b>
-📌 Формат: <b>{safe_item_type}</b>
-⏳ Срок/получение: <b>{safe_delivery_time}</b>
-🧾 Состояние: <b>{safe_condition}</b>
-
-<b>Описание:</b>
-{safe_description}
-
-🚀 Продвижение: <b>{promo_marker(is_top, is_highlight) or 'обычное'}</b>
-
-🛡 Сделка проходит через гаранта LTeam. Не переводите деньги напрямую продавцу.
-""",
+    await show_screen(
+        call,
+        listing_public_text(listing_id, seller_id, title, category, item_type, condition, price, description, delivery_time, is_top, is_highlight),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
         parse_mode="HTML",
     )
@@ -2207,8 +3444,309 @@ async def view_listing(call: CallbackQuery):
 
 
 @dp.callback_query(F.data.startswith("ask_seller:"))
-async def ask_seller(call: CallbackQuery):
-    await call.answer("Чат с продавцом откроется после создания сделки и подтверждения оплаты.", show_alert=True)
+async def ask_seller(call: CallbackQuery, state: FSMContext):
+    listing_id = int(call.data.split(":")[1])
+    buyer_id = call.from_user.id
+
+    with db() as conn:
+        row = conn.execute(
+            "SELECT seller_id, title, price FROM listings WHERE id=? AND status='active'",
+            (listing_id,),
+        ).fetchone()
+
+    if not row:
+        await call.answer("Объявление не найдено", show_alert=True)
+        return
+
+    seller_id, title, price = row
+    if seller_id == buyer_id:
+        await call.answer("Нельзя создать заявку на своё объявление", show_alert=True)
+        return
+
+    await state.update_data(listing_id=listing_id, seller_id=seller_id)
+    await state.set_state(ListingDiscussionState.message)
+
+    await show_screen(
+        call,
+        f"""
+━━━━━━━━━━━━━━
+💬 <b>Обсуждение заказа</b>
+━━━━━━━━━━━━━━
+
+Объявление: <b>{html.escape(title or 'Без названия')}</b>
+Цена от: <b>{int(price or 0)}₽</b>
+
+Напишите продавцу, что именно вам нужно:
+• задача / детали
+• желаемый срок
+• важные требования
+
+⚠️ Контакты и оплата напрямую запрещены. Общение и оплата — через LTeam.
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ К объявлению", callback_data=f"view_listing:{listing_id}")],
+        ]),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@dp.message(ListingDiscussionState.message)
+async def listing_discussion_message(message: Message, state: FSMContext):
+    data = await state.get_data()
+    listing_id = int(data.get("listing_id") or 0)
+    seller_id = int(data.get("seller_id") or 0)
+    buyer_id = message.from_user.id
+    text = (message.text or "").strip()
+
+    if not listing_id or not seller_id:
+        await state.clear()
+        await screen_answer(message, "❌ Заявка не найдена. Откройте объявление заново.")
+        return
+
+    if len(text) < 10:
+        await screen_answer(
+            message,
+            "Напишите чуть подробнее, чтобы продавец понял задачу. Минимум 10 символов.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ К объявлению", callback_data=f"view_listing:{listing_id}")],
+            ]),
+        )
+        await state.clear()
+        return
+
+    ok, reason = moderation_check(text, allow_contacts=False)
+    if not ok or looks_like_bypass_attempt(text):
+        register_security_event(buyer_id, "listing_request_blocked", f"listing #{listing_id}", text, status="blocked")
+        await state.clear()
+        await screen_answer(
+            message,
+            "❌ Сообщение заблокировано LTeam Protect. Нельзя указывать контакты, ссылки или просить оплату напрямую.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💬 Написать заново", callback_data=f"ask_seller:{listing_id}")],
+                [InlineKeyboardButton(text="⬅️ К объявлению", callback_data=f"view_listing:{listing_id}")],
+            ]),
+        )
+        return
+
+    with db() as conn:
+        listing = conn.execute(
+            "SELECT title, price FROM listings WHERE id=? AND status='active'",
+            (listing_id,),
+        ).fetchone()
+        if not listing:
+            await state.clear()
+            await screen_answer(message, "❌ Объявление уже недоступно.")
+            return
+
+        title, price = listing
+        cur = conn.execute(
+            """
+            INSERT INTO listing_discussion_requests
+            (listing_id, buyer_id, seller_id, message, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'new', ?, ?)
+            """,
+            (listing_id, buyer_id, seller_id, text, datetime.now().isoformat(), datetime.now().isoformat()),
+        )
+        request_id = cur.lastrowid
+        conn.commit()
+
+    await state.clear()
+
+    await screen_answer(
+        message,
+        f"""
+✅ <b>Заявка отправлена продавцу</b>
+
+Объявление: <b>{html.escape(title or 'Без названия')}</b>
+
+Продавец сможет принять заявку, отклонить её или открыть сделку для обсуждения внутри LTeam.
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📦 К объявлению", callback_data=f"view_listing:{listing_id}")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+        ]),
+        parse_mode="HTML",
+    )
+
+    try:
+        await bot.send_message(
+            seller_id,
+            f"""
+━━━━━━━━━━━━━━
+💬 <b>Новая заявка по объявлению</b>
+━━━━━━━━━━━━━━
+
+📦 Объявление: <b>{html.escape(title or 'Без названия')}</b>
+💰 Цена от: <b>{int(price or 0)}₽</b>
+👤 Покупатель: <code>{buyer_id}</code>
+
+Сообщение покупателя:
+{html.escape(text)}
+
+Если заявка подходит — нажмите «Откликнуться». После этого создастся сделка для безопасного чата.
+""",
+            reply_markup=listing_discussion_request_keyboard(request_id, listing_id, buyer_id),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        log_admin_action(0, "listing_request_notify_failed", seller_id, f"request_id={request_id}; error={e}")
+
+
+@dp.callback_query(F.data.startswith("listing_req_reject:"))
+async def listing_request_reject(call: CallbackQuery):
+    request_id = int(call.data.split(":")[1])
+
+    with db() as conn:
+        row = conn.execute(
+            "SELECT listing_id, buyer_id, seller_id, status FROM listing_discussion_requests WHERE id=?",
+            (request_id,),
+        ).fetchone()
+        if not row:
+            await call.answer("Заявка не найдена", show_alert=True)
+            return
+
+        listing_id, buyer_id, seller_id, status = row
+        if call.from_user.id != seller_id and not is_admin(call.from_user.id):
+            await call.answer("Нет доступа", show_alert=True)
+            return
+        if status != "new":
+            await call.answer("Заявка уже обработана", show_alert=True)
+            return
+
+        conn.execute(
+            "UPDATE listing_discussion_requests SET status='rejected', updated_at=? WHERE id=?",
+            (datetime.now().isoformat(), request_id),
+        )
+        conn.commit()
+
+    await bot.send_message(
+        buyer_id,
+        f"❌ Продавец отклонил заявку по объявлению #{listing_id}. Можно выбрать другое объявление в каталоге.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔎 Каталог услуг", callback_data="market")],
+        ]),
+    )
+    await call.message.edit_text(f"❌ Заявка #{request_id} отклонена.")
+    await call.answer("Заявка отклонена")
+
+
+@dp.callback_query(F.data.startswith("listing_req_accept:"))
+async def listing_request_accept(call: CallbackQuery):
+    request_id = int(call.data.split(":")[1])
+    seller_id = call.from_user.id
+
+    with db() as conn:
+        row = conn.execute(
+            """
+            SELECT r.listing_id, r.buyer_id, r.seller_id, r.message, r.status, l.title, l.price
+            FROM listing_discussion_requests r
+            JOIN listings l ON l.id = r.listing_id
+            WHERE r.id=?
+            """,
+            (request_id,),
+        ).fetchone()
+
+        if not row:
+            await call.answer("Заявка не найдена", show_alert=True)
+            return
+
+        listing_id, buyer_id, db_seller_id, request_message, status, title, price = row
+
+        if seller_id != db_seller_id and not is_admin(seller_id):
+            await call.answer("Нет доступа", show_alert=True)
+            return
+
+        if status != "new":
+            await call.answer("Заявка уже обработана", show_alert=True)
+            return
+
+        commission = int((price or 0) * COMMISSION_PERCENT / 100)
+        payout = int(price or 0) - commission
+
+        cur = conn.execute(
+            """
+            INSERT INTO deals (listing_id, buyer_id, seller_id, amount, commission, payout, payment_method, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (listing_id, buyer_id, db_seller_id, int(price or 0), commission, payout, "manual_admin_card", "discussion", datetime.now().isoformat()),
+        )
+        deal_id = cur.lastrowid
+
+        conn.execute(
+            "UPDATE listing_discussion_requests SET status='accepted', deal_id=?, updated_at=? WHERE id=?",
+            (deal_id, datetime.now().isoformat(), request_id),
+        )
+        conn.execute(
+            "INSERT INTO deal_messages (deal_id, sender_id, receiver_id, text, created_at) VALUES (?, ?, ?, ?, ?)",
+            (deal_id, buyer_id, db_seller_id, request_message, datetime.now().isoformat()),
+        )
+        conn.commit()
+
+    log_admin_action(db_seller_id, "listing_request_accepted", buyer_id, f"request_id={request_id}; listing_id={listing_id}; deal_id={deal_id}")
+
+    chat_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💬 Открыть чат сделки", callback_data=f"deal_chat:{deal_id}")],
+        [InlineKeyboardButton(text="📦 Открыть сделку", callback_data=f"deal:{deal_id}")],
+    ])
+
+    await bot.send_message(
+        buyer_id,
+        f"""
+✅ <b>Продавец откликнулся</b>
+
+Объявление: <b>{html.escape(title or 'Без названия')}</b>
+Сделка: <b>#{deal_id}</b>
+
+Теперь обсудите детали в чате сделки. Оплату не переводите напрямую — только через LTeam.
+""",
+        reply_markup=chat_kb,
+        parse_mode="HTML",
+    )
+
+    await call.message.edit_text(
+        f"""
+✅ <b>Заявка принята</b>
+
+Создана сделка: <b>#{deal_id}</b>
+Покупатель получил уведомление.
+
+Откройте чат и обсудите детали заказа.
+""",
+        reply_markup=chat_kb,
+        parse_mode="HTML",
+    )
+    await call.answer("Сделка создана")
+
+
+@dp.callback_query(F.data.startswith("listing_reviews:"))
+async def listing_reviews(call: CallbackQuery):
+    _, seller_raw, listing_raw = call.data.split(":")
+    seller_id = int(seller_raw)
+    listing_id = int(listing_raw)
+    stats = seller_stats(seller_id)
+
+    await show_screen(
+        call,
+        f"""
+━━━━━━━━━━━━━━
+⭐ <b>Отзывы продавца</b>
+━━━━━━━━━━━━━━
+
+👤 Продавец: <code>{seller_id}</code>
+⭐ Рейтинг: <b>{stats.get('rating_text', 'нет отзывов')}</b>
+💰 Завершённых продаж: <b>{stats.get('sales_count', 0)}</b>
+
+<b>Последние отзывы:</b>
+{seller_reviews_text(seller_id, limit=10)}
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ К объявлению", callback_data=f"view_listing:{listing_id}")],
+            [InlineKeyboardButton(text="👤 Профиль продавца", callback_data=f"seller_profile:{seller_id}")],
+        ]),
+        parse_mode="HTML",
+    )
+    await call.answer()
 
 
 @dp.callback_query(F.data.startswith("seller_profile:"))
@@ -2248,6 +3786,69 @@ async def seller_profile(call: CallbackQuery):
         parse_mode="HTML",
     )
     await call.answer()
+
+
+def seller_reviews_text(seller_id: int, limit: int = 3) -> str:
+    with db() as conn:
+        rows = conn.execute(
+            """
+            SELECT rating, text, created_at
+            FROM reviews
+            WHERE seller_id=?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (seller_id, limit),
+        ).fetchall()
+
+    if not rows:
+        return "Пока нет отзывов. Будьте первым, кто завершит безопасную сделку и оставит отзыв."
+
+    items = []
+    for rating, text, created_at in rows:
+        stars = "⭐" * int(rating or 0)
+        date = str(created_at or "")[:10]
+        items.append(f"• {stars} {html.escape(text or 'Без текста')}" + (f" · {html.escape(date)}" if date else ""))
+    return "\n".join(items)
+
+
+def listing_public_text(listing_id: int, seller_id: int, title: str, category: str, item_type: str, condition: str, price: int, description: str, delivery_time: str, is_top: int = 0, is_highlight: int = 0) -> str:
+    stats = seller_stats(seller_id)
+    return f"""
+━━━━━━━━━━━━━━
+📦 <b>{html.escape(title or 'Без названия')}</b>
+━━━━━━━━━━━━━━
+
+💰 Цена от: <b>{int(price or 0)}₽</b>
+📂 Категория: <b>{html.escape(category or '—')}</b>
+📌 Формат: <b>{html.escape(item_type or '—')}</b>
+⏳ Срок/получение: <b>{html.escape(delivery_time or 'Не указан')}</b>
+🧾 Состояние: <b>{html.escape(condition or '—')}</b>
+
+👤 Продавец: <b>{profile_title(seller_id) if 'profile_title' in globals() else seller_id}</b>
+⭐ Рейтинг: <b>{stats.get('rating_text', 'нет отзывов')}</b>
+🏷 Статус: <b>{trust_public_badge(seller_id) if 'trust_public_badge' in globals() else stats.get('status', 'Новый продавец')}</b>
+
+📝 <b>Описание:</b>
+{html.escape(description or 'Без описания')}
+
+🚀 Продвижение: <b>{promo_marker(is_top, is_highlight) or 'обычное'}</b>
+
+🛡 <b>Безопасность:</b> сначала обсудите заказ в боте. Оплата — только через гаранта LTeam.
+"""
+
+
+def listing_discussion_request_keyboard(request_id: int, listing_id: int, buyer_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Откликнуться", callback_data=f"listing_req_accept:{request_id}"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"listing_req_reject:{request_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="📦 Объявление", callback_data=f"view_listing:{listing_id}"),
+            InlineKeyboardButton(text="👤 Покупатель", callback_data=f"seller_profile:{buyer_id}"),
+        ],
+    ])
 
 
 # ===== ИЗБРАННОЕ =====
@@ -2369,10 +3970,21 @@ async def listing_cancel(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 
-def cancel_keyboard(extra_rows=None):
-    rows = extra_rows or []
-    rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="listing_cancel")])
+def listing_nav_keyboard(back_callback: str | None = None, *, home: bool = False, extra_rows=None):
+    """Единая навигация мастера размещения: назад / отмена / главное меню."""
+    rows = list(extra_rows or [])
+    nav = []
+    if back_callback:
+        nav.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback))
+    nav.append(InlineKeyboardButton(text="❌ Отменить", callback_data="listing_cancel"))
+    rows.append(nav)
+    if home:
+        rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def cancel_keyboard(extra_rows=None):
+    return listing_nav_keyboard(None, extra_rows=extra_rows)
 
 
 def category_examples_text(category: str) -> str:
@@ -2390,25 +4002,46 @@ def category_type_hint(category: str) -> str:
 
 @dp.callback_query(F.data == "create_listing")
 async def create_listing(call: CallbackQuery, state: FSMContext):
+    policy = protect_policy_for_user(call.from_user.id)
+    if policy.get("block_create_listing"):
+        register_security_event(call.from_user.id, "listing_create_blocked_high_risk", "create_listing", status="blocked")
+        await show_screen(
+            call,
+            protect_block_text(call.from_user.id, "создание объявления"),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⚖️ Подать апелляцию", callback_data="protect_appeal_start")],
+                [InlineKeyboardButton(text="🆘 Поддержка", callback_data="support"), InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+            ]),
+            parse_mode="HTML",
+        )
+        await notify_admins(f"""
+🔴 <b>LTeam Protect: создание объявления заблокировано</b>
+
+Пользователь: <code>{call.from_user.id}</code>
+Риск: <b>{policy.get('badge')}</b> / <b>{policy.get('score')}/100</b>
+""")
+        await call.answer("Действие заблокировано LTeam Protect", show_alert=True)
+        return
+
     await state.clear()
     await state.set_state(CreateListing.category)
 
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=cat, callback_data=f"cat_create:{cat}")]
-            for cat in CATEGORIES
-        ] + [[InlineKeyboardButton(text="❌ Отмена", callback_data="listing_cancel")]]
+    keyboard = listing_nav_keyboard(
+        None,
+        home=True,
+        extra_rows=[[InlineKeyboardButton(text=cat, callback_data=f"cat_create:{cat}")] for cat in CATEGORIES]
     )
 
     await show_screen(call,
         """
 ━━━━━━━━━━━━━━
-➕ <b>Размещение объявления</b>
+📦 <b>Разместить услугу</b>
 ━━━━━━━━━━━━━━
 
-Создайте услугу или цифровой товар для LTeam Market.
+Создайте карточку услуги, товара, шаблона или готового решения.
+Покупатель сможет открыть объявление, обсудить задачу и провести сделку через гаранта LTeam.
 
-<b>Шаг 1 из 7</b>
+<b>Шаг 1 из 6</b>
 Выберите категорию:
 """,
         reply_markup=keyboard,
@@ -2431,15 +4064,35 @@ async def listing_category(call: CallbackQuery, state: FSMContext):
 
 📂 Категория: <b>{html.escape(category)}</b>
 
-<b>Шаг 2 из 7</b>
+<b>Шаг 2 из 6</b>
 Напишите короткое и понятное название.
 
 💡 <b>Примеры:</b>
 {category_examples_text(category)}
 """,
-        reply_markup=cancel_keyboard(),
+        reply_markup=listing_nav_keyboard("listing_back_category"),
         parse_mode="HTML"
     )
+    await call.answer()
+
+
+@dp.callback_query(F.data == "listing_back_category")
+async def listing_back_category(call: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    await state.set_state(CreateListing.category)
+    keyboard = listing_nav_keyboard(
+        None,
+        home=True,
+        extra_rows=[[InlineKeyboardButton(text=cat, callback_data=f"cat_create:{cat}")] for cat in CATEGORIES]
+    )
+    await show_screen(call, """
+━━━━━━━━━━━━━━
+📦 <b>Разместить услугу</b>
+━━━━━━━━━━━━━━
+
+<b>Шаг 1 из 6</b>
+Выберите категорию:
+""", reply_markup=keyboard, parse_mode="HTML")
     await call.answer()
 
 
@@ -2448,11 +4101,11 @@ async def listing_title(message: Message, state: FSMContext):
     title = (message.text or "").strip()
 
     if len(title) < 3:
-        await screen_answer(message, "Название слишком короткое. Напишите понятнее.", reply_markup=cancel_keyboard())
+        await screen_answer(message, "Название слишком короткое. Напишите понятнее.", reply_markup=listing_nav_keyboard("listing_back_category"))
         return
     ok, reason = moderation_check(title)
     if not ok:
-        await screen_answer(message, f"🚫 Название не прошло авто-модерацию: {html.escape(reason)}", reply_markup=cancel_keyboard(), parse_mode="HTML")
+        await screen_answer(message, f"🚫 Название не прошло авто-модерацию: {html.escape(reason)}", reply_markup=listing_nav_keyboard("listing_back_category"), parse_mode="HTML")
         await notify_admins(f"⚠️ <b>Авто-модерация объявления</b>\n\nПользователь: <code>{message.from_user.id}</code>\nПричина: {html.escape(reason)}\nТекст: {html.escape(title)}")
         return
 
@@ -2462,11 +4115,9 @@ async def listing_title(message: Message, state: FSMContext):
     await state.update_data(title=title)
     await state.set_state(CreateListing.item_type)
 
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=t, callback_data=f"type_create:{t}")]
-            for t in item_types_for_category(category)
-        ] + [[InlineKeyboardButton(text="❌ Отмена", callback_data="listing_cancel")]]
+    keyboard = listing_nav_keyboard(
+        "listing_back_title",
+        extra_rows=[[InlineKeyboardButton(text=t, callback_data=f"type_create:{t}")] for t in item_types_for_category(category)]
     )
 
     await screen_answer(message,
@@ -2478,12 +4129,33 @@ async def listing_title(message: Message, state: FSMContext):
 📂 Категория: <b>{html.escape(category)}</b>
 📌 Название: <b>{html.escape(title)}</b>
 
-<b>Шаг 3 из 7</b>
+<b>Шаг 3 из 6</b>
 {html.escape(category_type_hint(category))}
 """,
         reply_markup=keyboard,
         parse_mode="HTML"
     )
+
+
+@dp.callback_query(F.data == "listing_back_title")
+async def listing_back_title(call: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    category = data.get("category", "🛠 Другое")
+    await state.set_state(CreateListing.title)
+    await show_screen(call, f"""
+━━━━━━━━━━━━━━
+📝 <b>Название объявления</b>
+━━━━━━━━━━━━━━
+
+📂 Категория: <b>{html.escape(category)}</b>
+
+<b>Шаг 2 из 6</b>
+Напишите короткое и понятное название.
+
+💡 <b>Примеры:</b>
+{category_examples_text(category)}
+""", reply_markup=listing_nav_keyboard("listing_back_category"), parse_mode="HTML")
+    await call.answer()
 
 
 @dp.callback_query(F.data.startswith("type_create:"))
@@ -2500,12 +4172,36 @@ async def listing_type(call: CallbackQuery, state: FSMContext):
 
 📌 Формат: <b>{html.escape(item_type)}</b>
 
-<b>Шаг 4 из 7</b>
+<b>Шаг 4 из 6</b>
 Выберите срок выполнения или получения товара.
 """,
-        reply_markup=delivery_time_keyboard(),
+        reply_markup=listing_delivery_keyboard(),
         parse_mode="HTML"
     )
+    await call.answer()
+
+
+@dp.callback_query(F.data == "listing_back_type")
+async def listing_back_type(call: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    category = data.get("category", "🛠 Другое")
+    title = data.get("title", "")
+    await state.set_state(CreateListing.item_type)
+    keyboard = listing_nav_keyboard(
+        "listing_back_title",
+        extra_rows=[[InlineKeyboardButton(text=t, callback_data=f"type_create:{t}")] for t in item_types_for_category(category)]
+    )
+    await show_screen(call, f"""
+━━━━━━━━━━━━━━
+📦 <b>Формат объявления</b>
+━━━━━━━━━━━━━━
+
+📂 Категория: <b>{html.escape(category)}</b>
+📌 Название: <b>{html.escape(title)}</b>
+
+<b>Шаг 3 из 6</b>
+{html.escape(category_type_hint(category))}
+""", reply_markup=keyboard, parse_mode="HTML")
     await call.answer()
 
 
@@ -2523,15 +4219,33 @@ async def listing_delivery_pick(call: CallbackQuery, state: FSMContext):
 
 ⏳ Срок: <b>{html.escape(delivery_time)}</b>
 
-<b>Шаг 5 из 7</b>
+<b>Шаг 5 из 6</b>
 Введите цену в рублях.
 
 Лимит: от <b>{MIN_ORDER_BUDGET}₽</b> до <b>{MAX_LISTING_PRICE}₽</b>.
 Пример: <code>1500</code>
 """,
-        reply_markup=cancel_keyboard(),
+        reply_markup=listing_nav_keyboard("listing_back_delivery"),
         parse_mode="HTML"
     )
+    await call.answer()
+
+
+@dp.callback_query(F.data == "listing_back_delivery")
+async def listing_back_delivery(call: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    item_type = data.get("item_type", "")
+    await state.set_state(CreateListing.delivery_time)
+    await show_screen(call, f"""
+━━━━━━━━━━━━━━
+⏳ <b>Срок / доступность</b>
+━━━━━━━━━━━━━━
+
+📌 Формат: <b>{html.escape(item_type)}</b>
+
+<b>Шаг 4 из 6</b>
+Выберите срок выполнения или получения товара.
+""", reply_markup=listing_delivery_keyboard(), parse_mode="HTML")
     await call.answer()
 
 
@@ -2540,7 +4254,7 @@ async def listing_delivery_time(message: Message, state: FSMContext):
     await screen_answer(
         message,
         "⏳ Срок нужно выбрать кнопкой ниже, а не писать текстом.",
-        reply_markup=delivery_time_keyboard(),
+        reply_markup=listing_delivery_keyboard(),
         parse_mode="HTML"
     )
 
@@ -2557,38 +4271,6 @@ async def listing_price(message: Message, state: FSMContext):
         return
 
     await state.update_data(price=price)
-    await state.set_state(CreateListing.payout_details)
-
-    await screen_answer(message,
-        f"""
-━━━━━━━━━━━━━━
-💳 <b>Реквизиты продавца</b>
-━━━━━━━━━━━━━━
-
-💰 Цена: <b>{price}₽</b>
-
-<b>Шаг 6 из 7</b>
-Укажите, куда LTeam должен будет перевести выплату после завершения сделки.
-
-Примеры:
-<code>СБП: +79000000000, Сбер, Иван И.</code>
-<code>TON/USDT: адрес кошелька</code>
-
-⚠️ Эти реквизиты видят только админы LTeam для выплаты. Покупатель платит только LTeam.
-""",
-        reply_markup=cancel_keyboard(),
-        parse_mode="HTML"
-    )
-
-
-@dp.message(CreateListing.payout_details)
-async def listing_payout_details(message: Message, state: FSMContext):
-    payout_details = (message.text or "").strip()
-    if len(payout_details) < 5:
-        await screen_answer(message, "Укажите реквизиты подробнее. Например: СБП + банк + имя или кошелёк.", reply_markup=cancel_keyboard())
-        return
-
-    await state.update_data(payout_details=payout_details)
     await state.set_state(CreateListing.description)
 
     await screen_answer(message,
@@ -2597,22 +4279,53 @@ async def listing_payout_details(message: Message, state: FSMContext):
 🧾 <b>Описание</b>
 ━━━━━━━━━━━━━━
 
-<b>Шаг 7 из 7</b>
+<b>Шаг 6 из 6</b>
 Опишите объявление по шаблону:
 
-1. Что вы сделаете?
-2. Что получит покупатель?
-3. Срок выполнения?
-4. Что нужно от покупателя?
+• что именно вы сделаете;
+• что получит покупатель;
+• что нужно от покупателя;
+• что не входит в услугу.
 
-Описание можно пропустить.
+Реквизиты для выплаты здесь указывать не нужно — они запрашиваются только при выводе средств.
 """,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⏭ Пропустить описание", callback_data="skip_desc")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="listing_cancel")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="listing_back_price"), InlineKeyboardButton(text="❌ Отменить", callback_data="listing_cancel")],
         ]),
         parse_mode="HTML"
     )
+
+
+@dp.message(CreateListing.payout_details)
+async def listing_payout_details_legacy(message: Message, state: FSMContext):
+    # Старое состояние больше не используется: реквизиты запрашиваются только при выводе.
+    await state.set_state(CreateListing.description)
+    await screen_answer(message, "Реквизиты при размещении больше не нужны. Опишите объявление.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⏭ Пропустить описание", callback_data="skip_desc")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="listing_back_price"), InlineKeyboardButton(text="❌ Отменить", callback_data="listing_cancel")],
+    ]), parse_mode="HTML")
+
+
+@dp.callback_query(F.data == "listing_back_price")
+async def listing_back_price(call: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    delivery_time = data.get("delivery_time", "")
+    await state.set_state(CreateListing.price)
+    await show_screen(call, f"""
+━━━━━━━━━━━━━━
+💰 <b>Цена</b>
+━━━━━━━━━━━━━━
+
+⏳ Срок: <b>{html.escape(delivery_time)}</b>
+
+<b>Шаг 5 из 6</b>
+Введите цену в рублях.
+
+Лимит: от <b>{MIN_ORDER_BUDGET}₽</b> до <b>{MAX_LISTING_PRICE}₽</b>.
+Пример: <code>1500</code>
+""", reply_markup=listing_nav_keyboard("listing_back_delivery"), parse_mode="HTML")
+    await call.answer()
 
 
 @dp.callback_query(F.data == "skip_desc")
@@ -2628,7 +4341,7 @@ async def listing_description(message: Message, state: FSMContext):
     if description != "Без описания":
         ok, reason = moderation_check(description)
         if not ok:
-            await screen_answer(message, f"🚫 Описание не прошло авто-модерацию: {html.escape(reason)}", reply_markup=cancel_keyboard(), parse_mode="HTML")
+            await screen_answer(message, f"🚫 Описание не прошло авто-модерацию: {html.escape(reason)}", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="listing_back_price"), InlineKeyboardButton(text="❌ Отменить", callback_data="listing_cancel")]]), parse_mode="HTML")
             await notify_admins(f"⚠️ <b>Авто-модерация описания объявления</b>\n\nПользователь: <code>{message.from_user.id}</code>\nПричина: {html.escape(reason)}\nТекст: {html.escape(description)}")
             return
     await state.update_data(description=description)
@@ -2666,15 +4379,17 @@ def build_listing_preview(data: dict):
 🧾 <b>Описание:</b>
 {html.escape(data.get('description', 'Без описания'))}
 
-💳 <b>Реквизиты для выплаты:</b>
-{html.escape(data.get('payout_details', ''))}
+🛡 <b>Безопасность:</b>
+Покупатель сможет обсудить заказ и оплатить только через гаранта LTeam.
+Реквизиты продавца запрашиваются отдельно при выводе средств.
 
 Отправляем объявление на модерацию?
 """
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Отправить на модерацию", callback_data="listing_publish")],
+        [InlineKeyboardButton(text="⬅️ Изменить описание", callback_data="listing_back_price")],
         [InlineKeyboardButton(text="✏️ Создать заново", callback_data="create_listing")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="listing_cancel")],
+        [InlineKeyboardButton(text="❌ Отменить", callback_data="listing_cancel")],
     ])
     return text, keyboard
 
@@ -2686,8 +4401,24 @@ async def listing_preview(call: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "listing_publish")
 async def listing_publish(call: CallbackQuery, state: FSMContext):
+    policy = protect_policy_for_user(call.from_user.id)
+    if policy.get("block_create_listing"):
+        register_security_event(call.from_user.id, "listing_publish_blocked_high_risk", "listing_publish", status="blocked")
+        await state.clear()
+        await show_screen(
+            call,
+            protect_block_text(call.from_user.id, "публикация объявления"),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⚖️ Подать апелляцию", callback_data="protect_appeal_start")],
+                [InlineKeyboardButton(text="🆘 Поддержка", callback_data="support"), InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+            ]),
+            parse_mode="HTML",
+        )
+        await call.answer("Публикация заблокирована LTeam Protect", show_alert=True)
+        return
+
     data = await state.get_data()
-    required = ["title", "category", "item_type", "delivery_time", "price", "payout_details"]
+    required = ["title", "category", "item_type", "delivery_time", "price"]
     if any(k not in data for k in required):
         await call.answer("Данные объявления не найдены. Создайте заново.", show_alert=True)
         return
@@ -2695,6 +4426,7 @@ async def listing_publish(call: CallbackQuery, state: FSMContext):
     description = data.get("description", "Без описания")
     seller_id = call.from_user.id
     seller_contact = user_contact(seller_id)
+    seller_policy = protect_policy_for_user(seller_id)
 
     with db() as conn:
         cur = conn.cursor()
@@ -2709,7 +4441,7 @@ async def listing_publish(call: CallbackQuery, state: FSMContext):
             "—",
             data["price"],
             description,
-            data["payout_details"],
+            "",
             data.get("delivery_time", ""),
             "moderation",
             datetime.now().isoformat()
@@ -2730,12 +4462,12 @@ async def listing_publish(call: CallbackQuery, state: FSMContext):
 💰 Цена: <b>{data['price']}₽</b>
 
 Оно появится в маркете только после проверки администратором.
-""",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+""" + channel_promo_text("listing_sent"),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=add_channel_button([
             [InlineKeyboardButton(text="📦 Мои объявления", callback_data="my_listings")],
             [InlineKeyboardButton(text="➕ Создать ещё", callback_data="create_listing")],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
-        ]),
+        ], "📢 Канал LTeam")),
         parse_mode="HTML"
     )
 
@@ -2752,9 +4484,9 @@ ID: <code>{listing_id}</code>
 📂 {html.escape(data['category'])}
 📌 {html.escape(data['item_type'])}
 💰 {data['price']}₽
+🛡 Риск продавца: <b>{seller_policy.get('badge')}</b> / <b>{seller_policy.get('score')}/100</b>
 
-💳 <b>Реквизиты продавца для выплаты:</b>
-{html.escape(data['payout_details'])}
+ℹ️ Реквизиты продавца не запрашиваются при размещении. Они будут обязательны только при выводе средств.
 """,
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="👤 Профиль продавца", callback_data=f"admin_user:{seller_id}")],
@@ -3023,194 +4755,124 @@ async def admin_promo_no(call: CallbackQuery):
 @dp.callback_query(F.data.startswith("buy:"))
 async def buy(call: CallbackQuery):
     listing_id = int(call.data.split(":")[1])
-    buyer_id = call.from_user.id
-
     with db() as conn:
         row = conn.execute(
-            "SELECT seller_id, price, title FROM listings WHERE id=? AND status='active'",
+            "SELECT seller_id, title, price FROM listings WHERE id=? AND status='active'",
             (listing_id,),
         ).fetchone()
+    if not row:
+        await call.answer("Объявление не найдено", show_alert=True)
+        return
+    seller_id, title, price = row
+    if seller_id == call.from_user.id:
+        await call.answer("Нельзя купить своё объявление", show_alert=True)
+        return
 
-        if not row:
-            await call.answer("Объявление не найдено", show_alert=True)
-            return
-
-        seller_id, price, title = row
-
-        if seller_id == buyer_id:
-            await call.answer("Нельзя купить своё объявление", show_alert=True)
-            return
-
-        commission = int(price * COMMISSION_PERCENT / 100)
-        payout = price - commission
-
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO deals (listing_id, buyer_id, seller_id, amount, commission, payout, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                listing_id,
-                buyer_id,
-                seller_id,
-                price,
-                commission,
-                payout,
-                "waiting_payment",
-                datetime.now().isoformat(),
-            ),
-        )
-
-        deal_id = cur.lastrowid
-        conn.commit()
-
-    await show_screen(call, 
+    await show_screen(
+        call,
         f"""
-🛒 <b>Сделка #{deal_id}</b>
-
-📦 <b>{title}</b>
-
-💰 Сумма: <b>{price}₽</b>
-🧾 Комиссия: <b>{commission}₽</b>
-
 ━━━━━━━━━━━━━━
-Выберите способ оплаты:
+🛡 <b>Безопасная сделка LTeam</b>
+━━━━━━━━━━━━━━
 
-⏳ Проверка оплаты до 24 часов
+Объявление: <b>{html.escape(title or 'Без названия')}</b>
+Цена от: <b>{int(price or 0)}₽</b>
+
+Теперь покупка начинается не с оплаты, а с обсуждения.
+Напишите продавцу детали задачи, после принятия заявки откроется чат сделки.
 """,
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="💳 СБП", callback_data=f"pay_sbp:{deal_id}"),
-                    InlineKeyboardButton(text="🪙 Крипта", callback_data=f"pay_crypto:{deal_id}")
-                ],
-                [
-                    InlineKeyboardButton(text="⭐ Stars", callback_data=f"pay_stars:{deal_id}")
-                ],
-                [
-                    InlineKeyboardButton(text="⬅️ Главное меню", callback_data="home")
-                ]
-            ]
-        ),
-        parse_mode="HTML"
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💬 Обсудить заказ", callback_data=f"ask_seller:{listing_id}")],
+            [InlineKeyboardButton(text="⬅️ К объявлению", callback_data=f"view_listing:{listing_id}")],
+        ]),
+        parse_mode="HTML",
     )
-
     await call.answer()
 
 
 # ===== СБП =====
 
+
 @dp.callback_query(F.data.startswith("pay_sbp:"))
 async def pay_sbp(call: CallbackQuery):
     deal_id = int(call.data.split(":")[1])
+    await show_screen(
+        call,
+        """
+💳 <b>Оплата изменилась</b>
 
-    with db() as conn:
-        conn.execute(
-            "UPDATE deals SET payment_method=?, status=? WHERE id=?",
-            ("sbp", "waiting_receipt", deal_id),
-        )
-        conn.commit()
+Теперь оплата проходит только через карту/СБП администратора LTeam и только после проверки сделки админом.
 
-    await show_screen(call, 
-        f"""
-💳 <b>Оплата через СБП</b>
-
-Сделка: <b>#{deal_id}</b>
-
-🏦 Банк: <b>{SBP_BANK}</b>
-👤 Получатель: <b>{SBP_NAME}</b>
-📱 Телефон: <code>{SBP_PHONE}</code>
-
-━━━━━━━━━━━━━━
-⏳ Проверка оплаты до 24 часов
-
-После оплаты нажмите кнопку ниже и отправьте чек.
+Откройте сделку и следуйте кнопкам: итоговая цена → подтверждение → проверка админом → реквизиты.
 """,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"receipt:{deal_id}")],
-            [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="home")]
+            [InlineKeyboardButton(text="📦 Открыть сделку", callback_data=f"deal:{deal_id}")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
         ]),
-        parse_mode="HTML"
+        parse_mode="HTML",
     )
-
     await call.answer()
 
 
 @dp.callback_query(F.data.startswith("pay_crypto:"))
 async def pay_crypto(call: CallbackQuery):
     deal_id = int(call.data.split(":")[1])
+    await pay_sbp(call)
 
-    with db() as conn:
-        conn.execute(
-            "UPDATE deals SET payment_method=?, status=? WHERE id=?",
-            ("crypto", "waiting_receipt", deal_id),
-        )
-        conn.commit()
-
-    await show_screen(call, 
-        f"""
-🪙 <b>Оплата криптой</b>
-
-Сделка: <b>#{deal_id}</b>
-
-TON кошелёк LTeam:
-<code>{CRYPTO_WALLET}</code>
-
-━━━━━━━━━━━━━━
-⏳ Проверка оплаты до 24 часов
-
-После оплаты нажмите кнопку ниже и отправьте хэш транзакции или скрин.
-""",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"receipt:{deal_id}")],
-            [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="home")]
-        ]),
-        parse_mode="HTML"
-    )
-
-    await call.answer()
 
 @dp.callback_query(F.data.startswith("pay_stars:"))
 async def pay_stars(call: CallbackQuery):
     deal_id = int(call.data.split(":")[1])
+    await pay_sbp(call)
 
-    with db() as conn:
-        conn.execute(
-            "UPDATE deals SET payment_method=?, status=? WHERE id=?",
-            ("stars", "waiting_receipt", deal_id),
-        )
-        conn.commit()
-
-    await show_screen(call, 
-        f"""
-⭐ <b>Оплата через Telegram Stars</b>
-
-Сделка: <b>#{deal_id}</b>
-
-Пока автоматическая оплата Stars не подключена.
-Свяжитесь с поддержкой или отправьте подтверждение оплаты после ручной оплаты.
-""",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"receipt:{deal_id}")],
-            [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="home")]
-        ]),
-        parse_mode="HTML"
-    )
-    await call.answer()
 
 
 @dp.callback_query(F.data.startswith("receipt:"))
 async def receipt_start(call: CallbackQuery, state: FSMContext):
     deal_id = int(call.data.split(":")[1])
+    user_id = call.from_user.id
+
+    with db() as conn:
+        row = conn.execute("SELECT buyer_id, amount, status FROM deals WHERE id=?", (deal_id,)).fetchone()
+
+    if not row:
+        await call.answer("Сделка не найдена", show_alert=True)
+        return
+
+    buyer_id, amount, status = row
+    if user_id != buyer_id:
+        await call.answer("Чек может отправить только покупатель.", show_alert=True)
+        return
+
+    if status != "waiting_payment":
+        await call.answer("Сначала админ должен разрешить оплату.", show_alert=True)
+        return
+
     await state.update_data(deal_id=deal_id)
     await state.set_state(ReceiptState.receipt)
 
-    await show_screen(call, "📎 Отправьте чек, скриншот или хэш транзакции одним сообщением.")
+    await show_screen(
+        call,
+        f"""
+📎 <b>Отправьте чек оплаты</b>
+
+Сделка: <b>#{deal_id}</b>
+Сумма: <b>{int(amount or 0)}₽</b>
+
+Можно отправить фото, документ или текст с данными перевода.
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Сделка", callback_data=f"deal:{deal_id}")],
+        ]),
+        parse_mode="HTML",
+    )
     await call.answer()
 
 
 @dp.message(ReceiptState.receipt)
 async def receipt_save(message: Message, state: FSMContext):
     data = await state.get_data()
-    deal_id = data["deal_id"]
+    deal_id = int(data["deal_id"])
 
     if message.photo:
         receipt_text = "📷 Пользователь отправил фото чека"
@@ -3222,14 +4884,25 @@ async def receipt_save(message: Message, state: FSMContext):
     with db() as conn:
         deal = conn.execute(
             """
-            SELECT buyer_id, seller_id, amount, commission, payout, payment_method
-            FROM deals WHERE id=?
+            SELECT d.buyer_id, d.seller_id, d.amount, d.commission, d.payout, d.payment_method,
+                   COALESCE(d.order_id, 0), COALESCE(l.title, o.title, 'Сделка LTeam')
+            FROM deals d
+            LEFT JOIN listings l ON l.id=d.listing_id
+            LEFT JOIN orders o ON o.id=d.order_id
+            WHERE d.id=?
             """,
             (deal_id,),
         ).fetchone()
 
         if not deal:
-            await screen_answer(message,"❌ Сделка не найдена.")
+            await screen_answer(message, "❌ Сделка не найдена.")
+            await state.clear()
+            return
+
+        buyer_id, seller_id, amount, commission, payout, method, order_id, title = deal
+
+        if message.from_user.id != buyer_id:
+            await screen_answer(message, "❌ Чек может отправить только покупатель.")
             await state.clear()
             return
 
@@ -3241,9 +4914,6 @@ async def receipt_save(message: Message, state: FSMContext):
 
     await state.clear()
 
-    buyer_id, seller_id, amount, commission, payout, method = deal
-    seller_contact = user_contact(seller_id)
-
     await screen_answer(message,
         f"""
 ━━━━━━━━━━━━━━
@@ -3251,50 +4921,55 @@ async def receipt_save(message: Message, state: FSMContext):
 ━━━━━━━━━━━━━━
 
 Сделка: <b>#{deal_id}</b>
+Сумма: <b>{int(amount or 0)}₽</b>
 
-⏳ Оплата будет проверена в течение 24 часов.
-После подтверждения исполнитель сможет начать работу.
+⏳ Админ проверит поступление денег. Если сумма пришла полностью, сделка перейдёт в работу.
 """,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📦 Открыть сделку", callback_data=f"deal:{deal_id}")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+        ]),
         parse_mode="HTML"
     )
 
     admin_text = f"""
 ━━━━━━━━━━━━━━
-🔔 <b>Оплата на проверку</b>
+🔔 <b>Чек на проверку</b>
 ━━━━━━━━━━━━━━
 
 📦 Сделка: <b>#{deal_id}</b>
+📌 Название: <b>{html.escape(title or 'Без названия')}</b>
 
 👤 Покупатель: <code>{buyer_id}</code>
-🏪 Продавец: {seller_contact}
+👷 Исполнитель: <code>{seller_id}</code>
 
-💰 Сумма: <b>{amount}₽</b>
-🧾 Комиссия LTeam: <b>{commission}₽</b>
-💸 К выплате продавцу: <b>{payout}₽</b>
+💰 Должно прийти: <b>{int(amount or 0)}₽</b>
+🧾 Комиссия LTeam: <b>{int(commission or 0)}₽</b>
+💸 После завершения к зачислению исполнителю: <b>{int(payout or 0)}₽</b>
 
-💳 Метод оплаты: <b>{method}</b>
+💳 Способ: <b>карта/СБП админу</b>
 
-━━━━━━━━━━━━━━
 🧾 Чек / данные оплаты:
-{receipt_text}
+{html.escape(receipt_text)}
+
+Проверьте поступление полной суммы. Если пришла не вся сумма — отклоните чек.
 """
 
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="✅ Подтвердить оплату", callback_data=f"admin_pay_ok:{deal_id}"),
-                InlineKeyboardButton(text="❌ Отклонить", callback_data=f"admin_pay_no:{deal_id}"),
-            ]
-        ]
-    )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Деньги пришли полностью", callback_data=f"admin_pay_ok:{deal_id}"),
+            InlineKeyboardButton(text="❌ Сумма не пришла", callback_data=f"admin_pay_no:{deal_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="👤 Покупатель", callback_data=f"admin_user:{buyer_id}"),
+            InlineKeyboardButton(text="👷 Исполнитель", callback_data=f"admin_user:{seller_id}"),
+        ],
+        ([InlineKeyboardButton(text="👀 Чат заказа", callback_data=f"admin_order_chat:{order_id}")] if int(order_id or 0) else [InlineKeyboardButton(text="👀 Чат сделки", callback_data=f"admin_deal_chat:{deal_id}")]),
+        [InlineKeyboardButton(text="📦 Сделка", callback_data=f"admin_deal_v2:{deal_id}")],
+    ])
 
-    for admin in ADMIN_IDS:
-        await bot.send_message(
-            admin,
-            admin_text,
-            reply_markup=keyboard,
-            parse_mode="HTML"
-        )
+    await notify_admins(admin_text, reply_markup=keyboard)
+
 
 @dp.callback_query(F.data.startswith("admin_pay_ok:"))
 async def admin_pay_ok(call: CallbackQuery):
@@ -3306,7 +4981,7 @@ async def admin_pay_ok(call: CallbackQuery):
 
     with db() as conn:
         deal = conn.execute(
-            "SELECT buyer_id, seller_id FROM deals WHERE id=?",
+            "SELECT buyer_id, seller_id, amount, commission, payout, status FROM deals WHERE id=?",
             (deal_id,),
         ).fetchone()
 
@@ -3314,30 +4989,39 @@ async def admin_pay_ok(call: CallbackQuery):
             await call.answer("Сделка не найдена", show_alert=True)
             return
 
-        buyer_id, seller_id = deal
-        conn.execute(
-            "UPDATE deals SET status=? WHERE id=?",
-            ("in_work", deal_id),
-        )
+        buyer_id, seller_id, amount, commission, payout, status = deal
+        if status != "waiting_admin_confirm":
+            await call.answer(f"Сделка сейчас в статусе: {status}", show_alert=True)
+            return
+
+        conn.execute("UPDATE deals SET status='in_work' WHERE id=?", (deal_id,))
         conn.commit()
 
+    freeze_deal_funds(seller_id, deal_id, int(payout or 0))
+    log_admin_action(call.from_user.id, "payment_confirmed_full_amount", buyer_id, f"deal_id={deal_id}; amount={amount}; commission={commission}; payout={payout}")
+
     chat_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💬 Написать по сделке", callback_data=f"deal_chat:{deal_id}")],
+        [InlineKeyboardButton(text="💬 Чат сделки", callback_data=f"deal_chat:{deal_id}")],
         [InlineKeyboardButton(text="📦 Открыть сделку", callback_data=f"deal:{deal_id}")],
     ])
 
     await bot.send_message(
         buyer_id,
-        f"✅ Оплата по сделке #{deal_id} подтверждена. Исполнитель начинает работу. Деньги будут переведены исполнителю только после вашего подтверждения выполнения. Общайтесь только через чат сделки в боте.",
+        f"✅ Оплата по сделке #{deal_id} подтверждена. Деньги заморожены у гаранта LTeam. Исполнитель может начинать работу.",
         reply_markup=chat_keyboard,
+        parse_mode="HTML",
     )
     await bot.send_message(
         seller_id,
-        f"✅ Оплата по сделке #{deal_id} подтверждена. Можно начинать выполнение. Когда закончите — откройте сделку и нажмите «📦 Отметить выполненным». Общайтесь только через чат сделки в боте.",
+        f"✅ Оплата по сделке #{deal_id} подтверждена. Можно начинать выполнение. После подтверждения покупателем вам будет зачислено <b>{int(payout or 0)}₽</b>.",
         reply_markup=chat_keyboard,
+        parse_mode="HTML",
     )
-    await call.message.edit_text(f"✅ Оплата по сделке #{deal_id} подтверждена.")
-    await call.answer()
+    await call.message.edit_text(
+        f"✅ Оплата по сделке #{deal_id} подтверждена.\n\n💰 Получено: {int(amount or 0)}₽\n🧾 Комиссия: {int(commission or 0)}₽\n💸 Исполнителю после завершения: {int(payout or 0)}₽",
+        parse_mode="HTML",
+    )
+    await call.answer("Оплата подтверждена")
 
 
 @dp.callback_query(F.data.startswith("admin_pay_no:"))
@@ -3350,7 +5034,7 @@ async def admin_pay_no(call: CallbackQuery):
 
     with db() as conn:
         deal = conn.execute(
-            "SELECT buyer_id FROM deals WHERE id=?",
+            "SELECT buyer_id, seller_id, amount, status FROM deals WHERE id=?",
             (deal_id,),
         ).fetchone()
 
@@ -3358,21 +5042,30 @@ async def admin_pay_no(call: CallbackQuery):
             await call.answer("Сделка не найдена", show_alert=True)
             return
 
-        buyer_id = deal[0]
-
-        conn.execute(
-            "UPDATE deals SET status=? WHERE id=?",
-            ("payment_rejected", deal_id),
-        )
+        buyer_id, seller_id, amount, status = deal
+        conn.execute("UPDATE deals SET status='waiting_payment', receipt=NULL, payment_admin_comment=? WHERE id=?", ("Чек отклонён: сумма не пришла полностью", deal_id))
         conn.commit()
+
+    log_admin_action(call.from_user.id, "payment_receipt_rejected", buyer_id, f"deal_id={deal_id}; expected_amount={amount}; old_status={status}")
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Реквизиты и повторная отправка чека", callback_data=f"deal:{deal_id}")],
+        [InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")],
+    ])
 
     await bot.send_message(
         buyer_id,
-        f"❌ Оплата по сделке #{deal_id} не подтверждена. Свяжитесь с поддержкой."
+        f"❌ Чек по сделке #{deal_id} отклонён. Админ не увидел полную сумму <b>{int(amount or 0)}₽</b>. Проверьте перевод и отправьте чек повторно.",
+        reply_markup=kb,
+        parse_mode="HTML",
     )
-
-    await call.message.edit_text(f"❌ Оплата по сделке #{deal_id} отклонена.")
-    await call.answer()
+    await bot.send_message(
+        seller_id,
+        f"⚠️ По сделке #{deal_id} чек покупателя отклонён: полная сумма ещё не подтверждена. Работу начинать не нужно.",
+        parse_mode="HTML",
+    )
+    await call.message.edit_text(f"❌ Чек по сделке #{deal_id} отклонён. Покупатель уведомлён.", parse_mode="HTML")
+    await call.answer("Чек отклонён")
 
 
 @dp.callback_query(F.data == "my_deals")
@@ -3664,6 +5357,7 @@ async def owner_delete_listing_ok(call: CallbackQuery):
 
 
 
+
 @dp.callback_query(F.data.startswith("deal:"))
 async def view_deal(call: CallbackQuery):
     deal_id = int(call.data.split(":")[1])
@@ -3673,9 +5367,13 @@ async def view_deal(call: CallbackQuery):
         deal = conn.execute(
             """
             SELECT d.id, d.buyer_id, d.seller_id, d.amount, d.commission,
-                   d.payout, d.payment_method, d.status, l.title
+                   d.payout, d.payment_method, d.status,
+                   COALESCE(l.title, o.title, 'Сделка LTeam') AS title,
+                   COALESCE(d.order_id, 0) AS order_id,
+                   COALESCE(d.source_type, CASE WHEN COALESCE(d.order_id,0)>0 THEN 'order' ELSE 'listing' END) AS source_type
             FROM deals d
-            JOIN listings l ON l.id = d.listing_id
+            LEFT JOIN listings l ON l.id = d.listing_id
+            LEFT JOIN orders o ON o.id = d.order_id
             WHERE d.id=?
             """,
             (deal_id,),
@@ -3686,25 +5384,39 @@ async def view_deal(call: CallbackQuery):
         return
 
     (
-        deal_id,
-        buyer_id,
-        seller_id,
-        amount,
-        commission,
-        payout,
-        payment_method,
-        status,
-        title,
+        deal_id, buyer_id, seller_id, amount, commission,
+        payout, payment_method, status, title, order_id, source_type,
     ) = deal
 
-    if user_id not in [buyer_id, seller_id] and user_id not in ADMIN_IDS:
+    if user_id not in [buyer_id, seller_id] and not is_admin(user_id):
         await call.answer("Нет доступа", show_alert=True)
         return
 
-    buttons = []
+    amount = int(amount or 0)
+    commission = int(commission or 0)
+    payout = int(payout or 0)
+    status_human = deal_status_title(status)
 
-    if status in ["in_work", "waiting_buyer_confirm", "waiting_payout", "completed"]:
+    buttons: list[list[InlineKeyboardButton]] = []
+
+    if int(order_id or 0) > 0:
+        other_id = seller_id if user_id == buyer_id else buyer_id
+        buttons.append([InlineKeyboardButton(text="💬 Чат заказа", callback_data=f"order_chat:{order_id}:{other_id}")])
+
+    if status in ["discussion", "waiting_final_price", "waiting_buyer_price_confirm", "waiting_admin_payment_approval", "waiting_payment", "waiting_receipt", "waiting_admin_confirm", "in_work", "waiting_buyer_confirm", "waiting_payout", "completed", "payment_rejected"]:
         buttons.append([InlineKeyboardButton(text="💬 Чат сделки", callback_data=f"deal_chat:{deal_id}")])
+
+    if user_id == seller_id and status in ["discussion", "waiting_final_price", "payment_rejected"]:
+        buttons.append([InlineKeyboardButton(text="💰 Выставить итоговую цену", callback_data=f"deal_set_final_price:{deal_id}")])
+
+    if user_id == buyer_id and status == "waiting_buyer_price_confirm":
+        buttons.append([
+            InlineKeyboardButton(text="✅ Подтвердить цену", callback_data=f"buyer_confirm_price:{deal_id}"),
+            InlineKeyboardButton(text="❌ Обсудить ещё", callback_data=f"buyer_reject_price:{deal_id}"),
+        ])
+
+    if user_id == buyer_id and status == "waiting_payment":
+        buttons.append([InlineKeyboardButton(text="💳 Реквизиты / Я оплатил", callback_data=f"show_payment_details:{deal_id}")])
 
     if user_id == seller_id and status == "in_work":
         buttons.append([InlineKeyboardButton(text="📦 Отметить выполненным", callback_data=f"seller_done:{deal_id}")])
@@ -3713,31 +5425,285 @@ async def view_deal(call: CallbackQuery):
         buttons.append([InlineKeyboardButton(text="✅ Подтвердить выполнение", callback_data=f"buyer_done:{deal_id}")])
         buttons.append([InlineKeyboardButton(text="❌ Есть проблема", callback_data=f"deal_dispute:{deal_id}")])
 
-    if status in ["in_work", "waiting_admin_confirm", "waiting_receipt", "waiting_buyer_confirm"]:
+    if status in ["in_work", "waiting_admin_confirm", "waiting_receipt", "waiting_buyer_confirm", "waiting_payment"]:
         buttons.append([InlineKeyboardButton(text="🚨 Открыть спор", callback_data=f"deal_dispute:{deal_id}")])
 
-    if user_id in ADMIN_IDS:
-        buttons.append([InlineKeyboardButton(text="👀 Админ: читать чат", callback_data=f"admin_deal_chat:{deal_id}")])
+    if is_admin(user_id):
+        admin_row = [InlineKeyboardButton(text="👀 Админ: читать чат", callback_data=f"admin_deal_chat:{deal_id}")]
+        buttons.append(admin_row)
+        if status == "waiting_admin_payment_approval":
+            buttons.append([
+                InlineKeyboardButton(text="✅ Разрешить оплату", callback_data=f"admin_allow_payment:{deal_id}"),
+                InlineKeyboardButton(text="❌ Отклонить", callback_data=f"admin_reject_payment:{deal_id}"),
+            ])
+        if status == "waiting_admin_confirm":
+            buttons.append([
+                InlineKeyboardButton(text="✅ Деньги пришли", callback_data=f"admin_pay_ok:{deal_id}"),
+                InlineKeyboardButton(text="❌ Сумма не пришла", callback_data=f"admin_pay_no:{deal_id}"),
+            ])
 
     buttons.append([InlineKeyboardButton(text="⬅️ Главное меню", callback_data="home")])
 
-    await show_screen(call, 
+    if status == "waiting_payment" and user_id == buyer_id:
+        payment_hint = lteam_card_payment_text(deal_id, amount)
+    else:
+        payment_hint = "🛡 Оплата будет доступна только после подтверждения итоговой цены и проверки админом."
+
+    await show_screen(call,
         f"""
+━━━━━━━━━━━━━━
 📦 <b>Сделка #{deal_id}</b>
+━━━━━━━━━━━━━━
 
-Товар/услуга: <b>{title}</b>
-Сумма: <b>{amount}₽</b>
-Комиссия: <b>{commission}₽</b>
-К выплате продавцу: <b>{payout}₽</b>
-Оплата: <b>{payment_method or "не выбрана"}</b>
-Статус: <b>{status}</b>
+Источник: <b>{'заказ' if source_type == 'order' else 'объявление'}</b>
+Название: <b>{html.escape(title or 'Без названия')}</b>
 
-🛡 Деньги исполнителю переводятся только после подтверждения выполнения покупателем.
+👤 Покупатель: <code>{buyer_id}</code>
+👷 Исполнитель: <code>{seller_id}</code>
+
+💰 Стоимость: <b>{amount}₽</b>
+🧾 Комиссия LTeam: <b>{commission}₽</b>
+💸 Исполнителю после завершения: <b>{payout}₽</b>
+
+📌 Статус: <b>{html.escape(status_human)}</b>
+💳 Оплата: <b>карта/СБП админу</b>
+
+{payment_hint}
 """,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
         parse_mode="HTML",
     )
     await call.answer()
+
+
+@dp.callback_query(F.data.startswith("show_payment_details:"))
+async def show_payment_details(call: CallbackQuery):
+    deal_id = int(call.data.split(":")[1])
+    user_id = call.from_user.id
+    with db() as conn:
+        row = conn.execute("SELECT buyer_id, seller_id, amount, status FROM deals WHERE id=?", (deal_id,)).fetchone()
+    if not row:
+        await call.answer("Сделка не найдена", show_alert=True)
+        return
+    buyer_id, seller_id, amount, status = row
+    if user_id != buyer_id:
+        await call.answer("Реквизиты видит только покупатель.", show_alert=True)
+        return
+    if status != "waiting_payment":
+        await call.answer("Оплата пока недоступна.", show_alert=True)
+        return
+    await show_screen(call, lteam_card_payment_text(deal_id, int(amount or 0)), reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"receipt:{deal_id}")],
+        [InlineKeyboardButton(text="💬 Чат сделки", callback_data=f"deal_chat:{deal_id}")],
+        [InlineKeyboardButton(text="⬅️ Сделка", callback_data=f"deal:{deal_id}")],
+    ]), parse_mode="HTML")
+    await call.answer()
+
+
+@dp.callback_query(F.data.startswith("deal_set_final_price:"))
+async def deal_set_final_price_start(call: CallbackQuery, state: FSMContext):
+    deal_id = int(call.data.split(":")[1])
+    user_id = call.from_user.id
+    with db() as conn:
+        row = conn.execute("SELECT seller_id, status FROM deals WHERE id=?", (deal_id,)).fetchone()
+    if not row:
+        await call.answer("Сделка не найдена", show_alert=True)
+        return
+    seller_id, status = row
+    if user_id != seller_id and not is_admin(user_id):
+        await call.answer("Итоговую цену выставляет исполнитель.", show_alert=True)
+        return
+    if status not in ["discussion", "waiting_final_price", "payment_rejected"]:
+        await call.answer("Сейчас нельзя менять цену.", show_alert=True)
+        return
+    await state.update_data(deal_id=deal_id)
+    await state.set_state(DealFinalPriceState.amount)
+    await show_screen(call, f"💰 <b>Итоговая цена сделки #{deal_id}</b>\n\nВведите сумму в ₽ одним числом. Например: <code>2500</code>", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Сделка", callback_data=f"deal:{deal_id}")]
+    ]), parse_mode="HTML")
+    await call.answer()
+
+
+@dp.message(DealFinalPriceState.amount)
+async def deal_set_final_price_save(message: Message, state: FSMContext):
+    data = await state.get_data()
+    deal_id = int(data.get("deal_id") or 0)
+    amount = parse_money(message.text or "")
+    if amount is None:
+        await screen_answer(message, "❌ Введите сумму числом, например: <code>2500</code>", parse_mode="HTML")
+        return
+    ok, reason = validate_application_price(amount)
+    if not ok:
+        await screen_answer(message, f"❌ {html.escape(reason)}", parse_mode="HTML")
+        return
+    total, commission, payout = money_parts(amount)
+    with db() as conn:
+        row = conn.execute("SELECT buyer_id, seller_id, status FROM deals WHERE id=?", (deal_id,)).fetchone()
+        if not row:
+            await screen_answer(message, "❌ Сделка не найдена.")
+            await state.clear()
+            return
+        buyer_id, seller_id, status = row
+        if message.from_user.id != seller_id and not is_admin(message.from_user.id):
+            await screen_answer(message, "❌ Итоговую цену выставляет исполнитель.")
+            await state.clear()
+            return
+        conn.execute(
+            """
+            UPDATE deals
+            SET amount=?, commission=?, payout=?, payment_method='admin_card_only',
+                status='waiting_buyer_price_confirm', final_price_set_by=?
+            WHERE id=?
+            """,
+            (total, commission, payout, message.from_user.id, deal_id),
+        )
+        conn.commit()
+    await state.clear()
+    kb_buyer = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Подтвердить цену", callback_data=f"buyer_confirm_price:{deal_id}"),
+            InlineKeyboardButton(text="❌ Обсудить ещё", callback_data=f"buyer_reject_price:{deal_id}"),
+        ],
+        [InlineKeyboardButton(text="💬 Чат сделки", callback_data=f"deal_chat:{deal_id}")],
+        [InlineKeyboardButton(text="📦 Сделка", callback_data=f"deal:{deal_id}")],
+    ])
+    await bot.send_message(
+        buyer_id,
+        f"""
+💰 <b>Исполнитель выставил итоговую цену</b>
+
+Сделка: <b>#{deal_id}</b>
+Стоимость: <b>{total}₽</b>
+Комиссия LTeam: <b>{commission}₽</b>
+Исполнителю после завершения: <b>{payout}₽</b>
+
+Подтвердите цену, если всё обсудили.
+""",
+        reply_markup=kb_buyer,
+        parse_mode="HTML",
+    )
+    await screen_answer(message, f"✅ Итоговая цена {total}₽ отправлена покупателю на подтверждение.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📦 Сделка", callback_data=f"deal:{deal_id}")]
+    ]), parse_mode="HTML")
+
+
+@dp.callback_query(F.data.startswith("buyer_confirm_price:"))
+async def buyer_confirm_price(call: CallbackQuery):
+    deal_id = int(call.data.split(":")[1])
+    user_id = call.from_user.id
+    with db() as conn:
+        row = conn.execute("SELECT buyer_id, seller_id, amount, commission, payout, status, COALESCE(order_id,0) FROM deals WHERE id=?", (deal_id,)).fetchone()
+        if not row:
+            await call.answer("Сделка не найдена", show_alert=True)
+            return
+        buyer_id, seller_id, amount, commission, payout, status, order_id = row
+        if user_id != buyer_id:
+            await call.answer("Подтвердить цену может только покупатель.", show_alert=True)
+            return
+        if status != "waiting_buyer_price_confirm":
+            await call.answer("Цена уже обработана или статус изменился.", show_alert=True)
+            return
+        conn.execute("UPDATE deals SET status='waiting_admin_payment_approval', final_price_confirmed_by=?, payment_requested_by=? WHERE id=?", (user_id, user_id, deal_id))
+        conn.commit()
+
+    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Разрешить оплату", callback_data=f"admin_allow_payment:{deal_id}"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"admin_reject_payment:{deal_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="👤 Покупатель", callback_data=f"admin_user:{buyer_id}"),
+            InlineKeyboardButton(text="👷 Исполнитель", callback_data=f"admin_user:{seller_id}"),
+        ],
+        ([InlineKeyboardButton(text="👀 Чат заказа", callback_data=f"admin_order_chat:{order_id}")] if int(order_id or 0) else [InlineKeyboardButton(text="👀 Чат сделки", callback_data=f"admin_deal_chat:{deal_id}")]),
+        [InlineKeyboardButton(text="📦 Сделка", callback_data=f"admin_deal_v2:{deal_id}")],
+    ])
+    await notify_admins(f"""
+🛡 <b>Запрос на разрешение оплаты</b>
+
+Сделка: <b>#{deal_id}</b>
+Покупатель: <code>{buyer_id}</code>
+Исполнитель: <code>{seller_id}</code>
+
+💰 Покупатель должен оплатить: <b>{int(amount or 0)}₽</b>
+🧾 Комиссия LTeam: <b>{int(commission or 0)}₽</b>
+💸 Исполнителю после завершения: <b>{int(payout or 0)}₽</b>
+
+Проверьте чат и профили. Если всё нормально — разрешите оплату.
+""", reply_markup=admin_kb)
+    await bot.send_message(seller_id, f"✅ Покупатель подтвердил цену по сделке #{deal_id}. Ожидаем разрешение оплаты админом.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📦 Сделка", callback_data=f"deal:{deal_id}")]]))
+    await show_screen(call, "⏳ Цена подтверждена. Запрос оплаты отправлен админу LTeam. После проверки вам придут реквизиты.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📦 Сделка", callback_data=f"deal:{deal_id}")]]), parse_mode="HTML")
+    await call.answer("Отправлено админу")
+
+
+@dp.callback_query(F.data.startswith("buyer_reject_price:"))
+async def buyer_reject_price(call: CallbackQuery):
+    deal_id = int(call.data.split(":")[1])
+    user_id = call.from_user.id
+    with db() as conn:
+        row = conn.execute("SELECT buyer_id, seller_id, status FROM deals WHERE id=?", (deal_id,)).fetchone()
+        if not row:
+            await call.answer("Сделка не найдена", show_alert=True)
+            return
+        buyer_id, seller_id, status = row
+        if user_id != buyer_id:
+            await call.answer("Нет доступа", show_alert=True)
+            return
+        conn.execute("UPDATE deals SET status='discussion' WHERE id=?", (deal_id,))
+        conn.commit()
+    await bot.send_message(seller_id, f"↩️ Покупатель хочет ещё обсудить цену по сделке #{deal_id}.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="💬 Чат сделки", callback_data=f"deal_chat:{deal_id}")], [InlineKeyboardButton(text="📦 Сделка", callback_data=f"deal:{deal_id}")]]))
+    await show_screen(call, "Ок, вернули сделку в обсуждение. Напишите исполнителю в чат, что нужно изменить.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="💬 Чат сделки", callback_data=f"deal_chat:{deal_id}")]]), parse_mode="HTML")
+    await call.answer()
+
+
+@dp.callback_query(F.data.startswith("admin_allow_payment:"))
+async def admin_allow_payment(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+    deal_id = int(call.data.split(":")[1])
+    with db() as conn:
+        row = conn.execute("SELECT buyer_id, seller_id, amount, commission, payout, status FROM deals WHERE id=?", (deal_id,)).fetchone()
+        if not row:
+            await call.answer("Сделка не найдена", show_alert=True)
+            return
+        buyer_id, seller_id, amount, commission, payout, status = row
+        if status != "waiting_admin_payment_approval":
+            await call.answer(f"Нельзя разрешить оплату в статусе: {status}", show_alert=True)
+            return
+        conn.execute("UPDATE deals SET status='waiting_payment', payment_approved_by=?, payment_approved_at=? WHERE id=?", (call.from_user.id, datetime.now().isoformat(), deal_id))
+        conn.commit()
+    log_admin_action(call.from_user.id, "payment_allowed", buyer_id, f"deal_id={deal_id}; amount={amount}; commission={commission}; payout={payout}")
+    buyer_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"receipt:{deal_id}")],
+        [InlineKeyboardButton(text="💬 Чат сделки", callback_data=f"deal_chat:{deal_id}"), InlineKeyboardButton(text="📦 Сделка", callback_data=f"deal:{deal_id}")],
+    ])
+    await bot.send_message(buyer_id, f"✅ <b>Оплата разрешена</b>\n\n{lteam_card_payment_text(deal_id, int(amount or 0))}", reply_markup=buyer_kb, parse_mode="HTML")
+    await bot.send_message(seller_id, f"⏳ По сделке #{deal_id} покупателю выданы реквизиты LTeam. Начинайте работу только после подтверждения оплаты админом.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📦 Сделка", callback_data=f"deal:{deal_id}")]]), parse_mode="HTML")
+    await call.message.edit_text(f"✅ Оплата по сделке #{deal_id} разрешена. Покупателю отправлены реквизиты.\n\n💰 К оплате: {int(amount or 0)}₽\n🧾 Комиссия: {int(commission or 0)}₽\n💸 Исполнителю после завершения: {int(payout or 0)}₽", parse_mode="HTML")
+    await call.answer("Оплата разрешена")
+
+
+@dp.callback_query(F.data.startswith("admin_reject_payment:"))
+async def admin_reject_payment(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+    deal_id = int(call.data.split(":")[1])
+    with db() as conn:
+        row = conn.execute("SELECT buyer_id, seller_id, amount, status FROM deals WHERE id=?", (deal_id,)).fetchone()
+        if not row:
+            await call.answer("Сделка не найдена", show_alert=True)
+            return
+        buyer_id, seller_id, amount, status = row
+        conn.execute("UPDATE deals SET status='payment_rejected', payment_rejected_by=?, payment_rejected_at=?, payment_admin_comment=? WHERE id=?", (call.from_user.id, datetime.now().isoformat(), "Админ отклонил разрешение оплаты", deal_id))
+        conn.commit()
+    log_admin_action(call.from_user.id, "payment_request_rejected", buyer_id, f"deal_id={deal_id}; amount={amount}; old_status={status}")
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="💬 Чат сделки", callback_data=f"deal_chat:{deal_id}")], [InlineKeyboardButton(text="📦 Сделка", callback_data=f"deal:{deal_id}")]])
+    await bot.send_message(buyer_id, f"❌ Оплата по сделке #{deal_id} пока отклонена админом. Деньги отправлять не нужно. Обсудите детали с исполнителем или обратитесь в поддержку.", reply_markup=kb, parse_mode="HTML")
+    await bot.send_message(seller_id, f"❌ Оплата по сделке #{deal_id} отклонена админом. Работу начинать не нужно. Можно обсудить детали и выставить цену заново.", reply_markup=kb, parse_mode="HTML")
+    await call.message.edit_text(f"❌ Оплата по сделке #{deal_id} отклонена. Участники уведомлены.", parse_mode="HTML")
+    await call.answer("Отклонено")
 
 
 @dp.callback_query(F.data.startswith("seller_done:"))
@@ -3817,8 +5783,11 @@ async def seller_done(call: CallbackQuery):
 async def buyer_done(call: CallbackQuery):
     deal_id = int(call.data.split(":")[1])
     buyer_id = call.from_user.id
+    ensure_finance_tables()
+    credited = False
 
     with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         deal = conn.execute(
             "SELECT buyer_id, seller_id, payout, status FROM deals WHERE id=?",
             (deal_id,),
@@ -3838,58 +5807,65 @@ async def buyer_done(call: CallbackQuery):
             await call.answer("Сначала исполнитель должен отметить заказ выполненным", show_alert=True)
             return
 
-        conn.execute(
-            "UPDATE deals SET status=? WHERE id=?",
-            ("waiting_payout", deal_id),
+        updated = conn.execute(
+            "UPDATE deals SET status=? WHERE id=? AND status='waiting_buyer_confirm'",
+            ("completed", deal_id),
+        ).rowcount
+        if updated != 1:
+            await call.answer("Статус сделки уже изменился. Обновите экран.", show_alert=True)
+            return
+
+        credited = _credit_seller_balance_in_conn(
+            conn,
+            seller_id,
+            deal_id,
+            int(payout or 0),
+            comment=f"Сделка #{deal_id} завершена покупателем",
         )
         conn.commit()
+
+    if credited:
+        log_admin_action(0, "seller_balance_credited", seller_id, f"deal_id={deal_id}; payout={int(payout or 0)}")
+    else:
+        log_admin_action(0, "seller_balance_credit_duplicate_skipped", seller_id, f"deal_id={deal_id}; payout={int(payout or 0)}")
 
     await show_screen(
         call,
         f"""
 ━━━━━━━━━━━━━━
-✅ <b>Выполнение подтверждено</b>
+✅ <b>Сделка завершена</b>
 ━━━━━━━━━━━━━━
 
 Сделка: <b>#{deal_id}</b>
 
-Теперь администратор сделает выплату исполнителю.
+Вы подтвердили выполнение. Деньги зачислены на баланс исполнителя.
 """,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⭐ Оценить исполнителя", callback_data=f"review_rating:{deal_id}:5")],
             [InlineKeyboardButton(text="📦 Открыть сделку", callback_data=f"deal:{deal_id}")],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
         ]),
         parse_mode="HTML",
     )
-    seller_contact = user_contact(seller_id)
-
-    admin_text = f"""
-💸 <b>Покупатель подтвердил выполнение</b>
-
-Сделка: <b>#{deal_id}</b>
-Продавец: {seller_contact}
-К выплате: <b>{payout}₽</b>
-
-Деньги можно переводить исполнителю.
-"""
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Выплату сделал", callback_data=f"admin_payout_done:{deal_id}")],
-        [InlineKeyboardButton(text="📦 Открыть сделку", callback_data=f"deal:{deal_id}")],
-    ])
-
-    for admin in ADMIN_IDS:
-        await bot.send_message(admin, admin_text, reply_markup=keyboard, parse_mode="HTML")
 
     await bot.send_message(
         seller_id,
-        f"✅ Покупатель подтвердил выполнение по сделке #{deal_id}. Ожидайте выплату от администратора."
+        f"""
+✅ <b>Покупатель подтвердил выполнение</b>
+
+Сделка: <b>#{deal_id}</b>
+На ваш баланс зачислено: <b>{int(payout or 0)}₽</b>
+
+Вы можете вывести средства в профиле. Выплата вручную, срок до <b>2 дней</b>.
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💰 Баланс", callback_data="balance")],
+            [InlineKeyboardButton(text="💸 Вывести", callback_data="withdraw_start")],
+            [InlineKeyboardButton(text="📦 Сделка", callback_data=f"deal:{deal_id}")],
+        ]),
+        parse_mode="HTML",
     )
-
     await call.answer()
-
-
-
 
 @dp.callback_query(F.data.startswith("admin_payout_done:"))
 async def admin_payout_done(call: CallbackQuery):
@@ -3938,18 +5914,487 @@ async def admin_payout_done(call: CallbackQuery):
     await call.answer()
 
 
-@dp.callback_query(F.data.startswith("deal_dispute:"))
-async def deal_dispute(call: CallbackQuery):
-    deal_id = int(call.data.split(":")[1])
 
-    for admin in ADMIN_IDS:
-        await bot.send_message(
-            admin,
-            f"🚨 Открыт спор по сделке #{deal_id}\nПользователь: {call.from_user.id}"
+# ===== PRO CORE: СПОРЫ, УМНЫЕ УВЕДОМЛЕНИЯ, ПРОДАВЦЫ =====
+
+def ensure_pro_tables() -> None:
+    """PRO-механики LTeam: споры, решения админов, улучшенный аудит."""
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS deal_disputes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            deal_id INTEGER NOT NULL,
+            opened_by INTEGER NOT NULL,
+            buyer_id INTEGER,
+            seller_id INTEGER,
+            reason TEXT,
+            status TEXT DEFAULT 'open',
+            resolved_by INTEGER,
+            resolution TEXT,
+            created_at TEXT,
+            resolved_at TEXT
         )
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS seller_levels_cache (
+            user_id INTEGER PRIMARY KEY,
+            level_code TEXT,
+            level_title TEXT,
+            score INTEGER DEFAULT 0,
+            updated_at TEXT
+        )
+        """)
+        conn.commit()
 
-    await show_screen(call, "🚨 Спор открыт. Администрация получила уведомление.")
+
+def seller_level(user_id: int) -> dict:
+    """Уровень исполнителя для карточек и админ-уведомлений."""
+    with db() as conn:
+        completed = conn.execute(
+            "SELECT COUNT(*) FROM deals WHERE seller_id=? AND status='completed'",
+            (user_id,),
+        ).fetchone()[0]
+        rating_row = conn.execute(
+            "SELECT COUNT(*), COALESCE(AVG(rating), 0) FROM reviews WHERE seller_id=?",
+            (user_id,),
+        ).fetchone()
+        disputes = conn.execute(
+            "SELECT COUNT(*) FROM deal_disputes WHERE seller_id=? AND status!='resolved_seller'",
+            (user_id,),
+        ).fetchone()[0] if table_exists('deal_disputes') else 0
+        reports = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM reports r
+            LEFT JOIN listings l ON l.id=r.listing_id
+            WHERE l.seller_id=?
+            """,
+            (user_id,),
+        ).fetchone()[0]
+
+    reviews_count = int(rating_row[0] or 0)
+    avg_rating = float(rating_row[1] or 0)
+    score = completed * 10 + reviews_count * 3 + int(avg_rating * 5) - disputes * 12 - reports * 8
+
+    if is_staff(user_id):
+        code, title = "official", "👑 Official LTeam"
+    elif completed >= 20 and avg_rating >= 4.8 and disputes == 0:
+        code, title = "top", "🏆 Топ исполнитель"
+    elif completed >= 5 and avg_rating >= 4.5:
+        code, title = "trusted", "✅ Проверенный исполнитель"
+    elif completed >= 1:
+        code, title = "seller", "📈 Исполнитель"
+    else:
+        code, title = "new", "🆕 Новичок"
+
+    return {
+        "code": code,
+        "title": title,
+        "score": max(0, int(score)),
+        "completed": int(completed or 0),
+        "reviews_count": reviews_count,
+        "avg_rating": avg_rating,
+        "disputes": int(disputes or 0),
+        "reports": int(reports or 0),
+    }
+
+
+def deal_admin_summary(deal_id: int) -> dict | None:
+    with db() as conn:
+        row = conn.execute(
+            """
+            SELECT d.id, d.buyer_id, d.seller_id, d.amount, d.commission, d.payout,
+                   d.status, COALESCE(l.title, o.title, 'Сделка LTeam') AS title,
+                   COALESCE(d.order_id, 0) AS order_id
+            FROM deals d
+            LEFT JOIN listings l ON l.id=d.listing_id
+            LEFT JOIN orders o ON o.id=d.order_id
+            WHERE d.id=?
+            """,
+            (deal_id,),
+        ).fetchone()
+    if not row:
+        return None
+    did, buyer_id, seller_id, amount, commission, payout, status, title, order_id = row
+    buyer_risk = get_user_security_score(buyer_id)
+    seller_risk = get_user_security_score(seller_id)
+    seller_lvl = seller_level(seller_id)
+    return {
+        "deal_id": did,
+        "buyer_id": buyer_id,
+        "seller_id": seller_id,
+        "amount": int(amount or 0),
+        "commission": int(commission or 0),
+        "payout": int(payout or 0),
+        "status": status,
+        "title": title,
+        "order_id": int(order_id or 0),
+        "buyer_risk": buyer_risk,
+        "seller_risk": seller_risk,
+        "seller_level": seller_lvl,
+    }
+
+
+def smart_admin_deal_keyboard(deal_id: int, buyer_id: int, seller_id: int, *, order_id: int = 0, dispute_id: int | None = None) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(text="👤 Покупатель", callback_data=f"admin_user:{buyer_id}"),
+            InlineKeyboardButton(text="👷 Исполнитель", callback_data=f"admin_user:{seller_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="📦 Сделка", callback_data=f"admin_deal_view_v2:{deal_id}"),
+            InlineKeyboardButton(text="💬 Чат сделки", callback_data=f"admin_deal_chat:{deal_id}"),
+        ],
+    ]
+    if order_id:
+        rows.append([InlineKeyboardButton(text="👀 Чат заказа", callback_data=f"admin_order_chat:{order_id}")])
+    if dispute_id:
+        rows.append([
+            InlineKeyboardButton(text="↩️ Вернуть покупателю", callback_data=f"admin_dispute_refund:{dispute_id}"),
+            InlineKeyboardButton(text="✅ Отдать исполнителю", callback_data=f"admin_dispute_seller:{dispute_id}"),
+        ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def notify_admins_deal_event(title: str, deal_id: int, body: str = "", *, important: bool = False, dispute_id: int | None = None):
+    info = deal_admin_summary(deal_id)
+    if not info:
+        await notify_admins(f"{title}\n\nСделка #{deal_id} не найдена.")
+        return
+    prefix = "🚨 <b>ВАЖНО</b>\n\n" if important else ""
+    text = f"""
+{prefix}{title}
+
+📦 Сделка: <b>#{deal_id}</b>
+📌 Название: <b>{html.escape(info['title'] or 'Без названия')}</b>
+📍 Статус: <b>{html.escape(deal_status_title(info['status']))}</b>
+
+👤 Покупатель: <code>{info['buyer_id']}</code>
+Риск: <b>{html.escape(info['buyer_risk'].get('badge', ''))}</b> · Score: <b>{info['buyer_risk'].get('score', 0)}/100</b>
+
+👷 Исполнитель: <code>{info['seller_id']}</code>
+Уровень: <b>{html.escape(info['seller_level']['title'])}</b>
+Риск: <b>{html.escape(info['seller_risk'].get('badge', ''))}</b> · Score: <b>{info['seller_risk'].get('score', 0)}/100</b>
+
+💰 Сумма: <b>{info['amount']}₽</b>
+🧾 Комиссия: <b>{info['commission']}₽</b>
+💸 Исполнителю: <b>{info['payout']}₽</b>
+
+{body}
+"""
+    await notify_admins(
+        text,
+        reply_markup=smart_admin_deal_keyboard(
+            deal_id,
+            info["buyer_id"],
+            info["seller_id"],
+            order_id=info.get("order_id", 0),
+            dispute_id=dispute_id,
+        ),
+    )
+
+
+def open_deal_dispute(deal_id: int, opened_by: int, reason: str) -> tuple[bool, str, int | None, tuple | None]:
+    ensure_pro_tables()
+    with db() as conn:
+        row = conn.execute(
+            "SELECT buyer_id, seller_id, status FROM deals WHERE id=?",
+            (deal_id,),
+        ).fetchone()
+        if not row:
+            return False, "Сделка не найдена.", None, None
+        buyer_id, seller_id, status = row
+        if opened_by not in (buyer_id, seller_id) and not is_admin(opened_by):
+            return False, "Нет доступа к сделке.", None, None
+        if status in ("completed", "cancelled", "deleted"):
+            return False, "По завершённой или отменённой сделке спор открыть нельзя.", None, None
+        exists = conn.execute(
+            "SELECT id FROM deal_disputes WHERE deal_id=? AND status='open'",
+            (deal_id,),
+        ).fetchone()
+        if exists:
+            return False, f"По этой сделке уже открыт спор #{exists[0]}.", int(exists[0]), (buyer_id, seller_id, status)
+        cur = conn.execute(
+            """
+            INSERT INTO deal_disputes (deal_id, opened_by, buyer_id, seller_id, reason, status, created_at)
+            VALUES (?, ?, ?, ?, ?, 'open', ?)
+            """,
+            (deal_id, opened_by, buyer_id, seller_id, reason, datetime.now().isoformat()),
+        )
+        dispute_id = int(cur.lastrowid)
+        conn.execute("UPDATE deals SET status='dispute_open' WHERE id=?", (deal_id,))
+        conn.commit()
+    log_admin_action(opened_by, "deal_dispute_opened", deal_id, f"dispute_id={dispute_id}; reason={reason}")
+    return True, "ok", dispute_id, (buyer_id, seller_id, status)
+
+
+@dp.callback_query(F.data.startswith("deal_dispute:"))
+async def deal_dispute(call: CallbackQuery, state: FSMContext):
+    deal_id = int(call.data.split(":")[1])
+    with db() as conn:
+        row = conn.execute("SELECT buyer_id, seller_id, status FROM deals WHERE id=?", (deal_id,)).fetchone()
+    if not row:
+        await call.answer("Сделка не найдена", show_alert=True)
+        return
+    buyer_id, seller_id, status = row
+    if call.from_user.id not in (buyer_id, seller_id) and not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+    await state.update_data(dispute_deal_id=deal_id)
+    await state.set_state(DisputeState.reason)
+    await show_screen(
+        call,
+        f"""
+━━━━━━━━━━━━━━
+🚨 <b>Открыть спор</b>
+━━━━━━━━━━━━━━
+
+Сделка: <b>#{deal_id}</b>
+Статус: <b>{html.escape(deal_status_title(status))}</b>
+
+Опишите проблему одним сообщением:
+• что было обещано;
+• что пошло не так;
+• какой результат вы хотите получить.
+
+Админ увидит чат сделки, профили сторон и риск-профили участников.
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Сделка", callback_data=f"deal:{deal_id}")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+        ]),
+        parse_mode="HTML",
+    )
     await call.answer()
+
+
+@dp.message(DisputeState.reason)
+async def deal_dispute_reason_save(message: Message, state: FSMContext):
+    data = await state.get_data()
+    deal_id = int(data.get("dispute_deal_id") or 0)
+    reason = (message.text or "").strip()
+    if len(reason) < 10:
+        await screen_answer(message, "❌ Опишите проблему подробнее. Минимум 10 символов.", parse_mode="HTML")
+        return
+    if len(reason) > 1500:
+        reason = reason[:1500]
+    ok, msg, dispute_id, participants = open_deal_dispute(deal_id, message.from_user.id, reason)
+    await state.clear()
+    if not ok:
+        await screen_answer(
+            message,
+            f"❌ {html.escape(msg)}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📦 Сделка", callback_data=f"deal:{deal_id}")],
+                [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+            ]),
+            parse_mode="HTML",
+        )
+        return
+    buyer_id, seller_id, old_status = participants
+    await screen_answer(
+        message,
+        f"""
+🚨 <b>Спор открыт</b>
+
+Сделка: <b>#{deal_id}</b>
+Спор: <b>#{dispute_id}</b>
+
+Администратор получил уведомление и проверит чат сделки.
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📦 Сделка", callback_data=f"deal:{deal_id}")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+        ]),
+        parse_mode="HTML",
+    )
+    other_id = seller_id if message.from_user.id == buyer_id else buyer_id
+    try:
+        await bot.send_message(
+            other_id,
+            f"🚨 По сделке #{deal_id} открыт спор. Админ LTeam проверит ситуацию.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📦 Сделка", callback_data=f"deal:{deal_id}")],
+                [InlineKeyboardButton(text="💬 Чат сделки", callback_data=f"deal_chat:{deal_id}")],
+            ]),
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+    await notify_admins_deal_event(
+        "🚨 <b>Открыт спор по сделке</b>",
+        deal_id,
+        body=f"<b>Причина:</b>\n{html.escape(reason)}",
+        important=True,
+        dispute_id=dispute_id,
+    )
+
+
+@dp.callback_query(F.data == "admin_disputes")
+async def admin_disputes(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+    ensure_pro_tables()
+    with db() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, deal_id, opened_by, buyer_id, seller_id, reason, created_at
+            FROM deal_disputes
+            WHERE status='open'
+            ORDER BY id ASC
+            LIMIT 20
+            """,
+        ).fetchall()
+    if not rows:
+        await show_screen(call, "🚨 <b>Споры</b>\n\nОткрытых споров нет.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")]]), parse_mode="HTML")
+        await call.answer()
+        return
+    text = "🚨 <b>Открытые споры</b>\n\n"
+    buttons = []
+    for did, deal_id, opened_by, buyer_id, seller_id, reason, created_at in rows:
+        text += f"• <b>#{did}</b> · сделка <b>#{deal_id}</b> · открыл <code>{opened_by}</code> · <code>{short_time(created_at)}</code>\n"
+        buttons.append([InlineKeyboardButton(text=f"#{did} · сделка #{deal_id}", callback_data=f"admin_dispute_view:{did}")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")])
+    await show_screen(call, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+    await call.answer()
+
+
+@dp.callback_query(F.data.startswith("admin_dispute_view:"))
+async def admin_dispute_view(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+    dispute_id = int(call.data.split(":")[1])
+    ensure_pro_tables()
+    with db() as conn:
+        row = conn.execute(
+            """
+            SELECT id, deal_id, opened_by, buyer_id, seller_id, reason, status, created_at
+            FROM deal_disputes
+            WHERE id=?
+            """,
+            (dispute_id,),
+        ).fetchone()
+    if not row:
+        await call.answer("Спор не найден", show_alert=True)
+        return
+    did, deal_id, opened_by, buyer_id, seller_id, reason, status, created_at = row
+    risk_buyer = get_user_security_score(buyer_id)
+    risk_seller = get_user_security_score(seller_id)
+    history = format_chat_history(get_deal_chat_history(deal_id, limit=8), current_user_id=call.from_user.id, limit_note="последние 8")
+    await show_screen(
+        call,
+        f"""
+━━━━━━━━━━━━━━
+🚨 <b>Спор #{did}</b>
+━━━━━━━━━━━━━━
+
+Сделка: <b>#{deal_id}</b>
+Открыл: <code>{opened_by}</code>
+Статус: <b>{html.escape(status or '')}</b>
+Создан: <code>{short_time(created_at)}</code>
+
+👤 Покупатель: <code>{buyer_id}</code> · {html.escape(risk_buyer.get('badge', ''))} · {risk_buyer.get('score', 0)}/100
+👷 Исполнитель: <code>{seller_id}</code> · {html.escape(risk_seller.get('badge', ''))} · {risk_seller.get('score', 0)}/100
+
+<b>Причина:</b>
+{html.escape(reason or 'Не указана')}
+
+<b>Чат сделки:</b>
+{history}
+""",
+        reply_markup=smart_admin_deal_keyboard(deal_id, buyer_id, seller_id, dispute_id=did),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+def resolve_dispute(dispute_id: int, admin_id: int, resolution: str) -> tuple[bool, str, tuple | None]:
+    ensure_pro_tables()
+    ensure_finance_tables()
+    credited = False
+
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT deal_id, buyer_id, seller_id, status FROM deal_disputes WHERE id=?",
+            (dispute_id,),
+        ).fetchone()
+        if not row:
+            return False, "Спор не найден.", None
+
+        deal_id, buyer_id, seller_id, status = row
+        if status != "open":
+            return False, "Спор уже обработан.", row
+
+        deal = conn.execute("SELECT payout FROM deals WHERE id=?", (deal_id,)).fetchone()
+        payout = int(deal[0] or 0) if deal else 0
+        new_dispute_status = "resolved_buyer" if resolution == "buyer" else "resolved_seller"
+        new_deal_status = "dispute_resolved_buyer" if resolution == "buyer" else "completed"
+
+        conn.execute(
+            """
+            UPDATE deal_disputes
+            SET status=?, resolved_by=?, resolution=?, resolved_at=?
+            WHERE id=? AND status='open'
+            """,
+            (new_dispute_status, admin_id, resolution, datetime.now().isoformat(), dispute_id),
+        )
+        conn.execute("UPDATE deals SET status=? WHERE id=?", (new_deal_status, deal_id))
+
+        if resolution == "seller" and payout > 0:
+            credited = _credit_seller_balance_in_conn(
+                conn,
+                seller_id,
+                deal_id,
+                payout,
+                comment=f"Спор #{dispute_id} решён в пользу исполнителя",
+            )
+
+        conn.commit()
+
+    log_admin_action(
+        admin_id,
+        f"dispute_resolved_{resolution}",
+        deal_id,
+        f"dispute_id={dispute_id}; payout={payout}; seller_credit={'yes' if credited else 'no'}",
+    )
+    return True, "ok", (deal_id, buyer_id, seller_id, payout)
+
+@dp.callback_query(F.data.startswith("admin_dispute_refund:"))
+async def admin_dispute_refund(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+    dispute_id = int(call.data.split(":")[1])
+    ok, msg, row = resolve_dispute(dispute_id, call.from_user.id, "buyer")
+    if not ok:
+        await call.answer(msg, show_alert=True)
+        return
+    deal_id, buyer_id, seller_id, payout = row
+    await bot.send_message(buyer_id, f"↩️ Спор #{dispute_id} по сделке #{deal_id} решён в вашу пользу. Админ LTeam свяжется по возврату, если оплата уже была внесена.")
+    await bot.send_message(seller_id, f"🚨 Спор #{dispute_id} по сделке #{deal_id} решён в пользу покупателя. Средства исполнителю не зачислены.")
+    await show_screen(call, f"↩️ Спор #{dispute_id} решён в пользу покупателя.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🚨 Все споры", callback_data="admin_disputes")], [InlineKeyboardButton(text="📦 Сделка", callback_data=f"admin_deal_view_v2:{deal_id}")]]), parse_mode="HTML")
+    await call.answer("Решено")
+
+
+@dp.callback_query(F.data.startswith("admin_dispute_seller:"))
+async def admin_dispute_seller(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+    dispute_id = int(call.data.split(":")[1])
+    ok, msg, row = resolve_dispute(dispute_id, call.from_user.id, "seller")
+    if not ok:
+        await call.answer(msg, show_alert=True)
+        return
+    deal_id, buyer_id, seller_id, payout = row
+    await bot.send_message(buyer_id, f"✅ Спор #{dispute_id} по сделке #{deal_id} решён в пользу исполнителя. Сделка закрыта.")
+    await bot.send_message(seller_id, f"✅ Спор #{dispute_id} по сделке #{deal_id} решён в вашу пользу. На баланс зачислено: <b>{int(payout or 0)}₽</b>.", parse_mode="HTML")
+    await show_screen(call, f"✅ Спор #{dispute_id} решён в пользу исполнителя. Зачислено: <b>{int(payout or 0)}₽</b>.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🚨 Все споры", callback_data="admin_disputes")], [InlineKeyboardButton(text="📦 Сделка", callback_data=f"admin_deal_view_v2:{deal_id}")]]), parse_mode="HTML")
+    await call.answer("Решено")
 
 
 # ===== ЧАТ СДЕЛКИ =====
@@ -3975,8 +6420,8 @@ async def deal_chat_start(call: CallbackQuery, state: FSMContext):
         await call.answer("Нет доступа", show_alert=True)
         return
 
-    if status not in ["in_work", "waiting_payout", "completed"]:
-        await call.answer("Чат откроется после подтверждения оплаты", show_alert=True)
+    if status not in ["discussion", "waiting_final_price", "waiting_buyer_price_confirm", "waiting_admin_payment_approval", "waiting_payment", "waiting_receipt", "waiting_admin_confirm", "in_work", "waiting_buyer_confirm", "waiting_payout", "completed", "payment_rejected"]:
+        await call.answer("Чат сделки пока недоступен", show_alert=True)
         return
 
     receiver_id = seller_id if user_id == buyer_id else buyer_id
@@ -4018,7 +6463,21 @@ async def deal_chat_send(message: Message, state: FSMContext):
         return
 
     text = message.text or "Пользователь отправил сообщение без текста"
-    await warn_if_bypass_attempt(message.from_user.id, text, f"deal #{deal_id}")
+
+    protect_ok, protect_reason = await protect_check_outgoing_message(message.from_user.id, text, f"deal #{deal_id}")
+    if not protect_ok:
+        await screen_answer(
+            message,
+            html.escape(protect_reason),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💬 Написать заново", callback_data=f"deal_chat:{deal_id}")],
+                [InlineKeyboardButton(text="📦 Открыть сделку", callback_data=f"deal:{deal_id}")],
+            ]),
+            parse_mode="HTML",
+        )
+        return
+
+    await protect_notify_partner_if_needed(message.from_user.id, receiver_id, f"deal #{deal_id}")
 
     with db() as conn:
         conn.execute(
@@ -4070,6 +6529,7 @@ async def admin_deal_chat(call: CallbackQuery):
 """,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📦 Открыть сделку", callback_data=f"deal:{deal_id}")],
+            [InlineKeyboardButton(text="💬 Центр чатов", callback_data="admin_chat_hint")],
             [InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")],
         ]),
         parse_mode="HTML",
@@ -4115,15 +6575,20 @@ async def support(call: CallbackQuery):
 
     await show_screen(call, 
         f"""
+━━━━━━━━━━━━━━
 🆘 <b>Поддержка LTeam</b>
+━━━━━━━━━━━━━━
 
 Здесь можно создать обращение по оплате, сделке, объявлению или спору.
 
 Активных обращений: <b>{open_count}</b>
+
+Если LTeam Protect ограничил действие, используйте отдельную апелляцию — так владельцы увидят её быстрее.
 """,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="➕ Создать обращение", callback_data="ticket_create")],
             [InlineKeyboardButton(text="📂 Мои обращения", callback_data="my_tickets")],
+            [InlineKeyboardButton(text="⚖️ Апелляция Protect", callback_data="protect_appeal_start")],
             [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="home")],
         ]),
         parse_mode="HTML",
@@ -4362,74 +6827,1487 @@ async def review_text(message: Message, state: FSMContext):
     await screen_answer(message,"✅ Спасибо! Отзыв сохранён.")
 
 
+
+
+
+# ===== LTEAM PROFILE SYSTEM V1 =====
+
+FREE_PROFILE_EMOJIS = ["👤", "🚀", "💼", "🎨", "🤖", "🧠", "✍️", "🛠", "📦", "⭐"]
+PREMIUM_PROFILE_EMOJIS = ["💎", "🔥", "👑", "⚡", "🦾", "🧩", "🌟", "🏆", "🛡", "🧬"]
+LTEAM_PLUS_DAYS_DEFAULT = 30
+
+
+def ensure_profile_tables() -> None:
+    """Миграции для профилей, подписки, эмодзи и заявок на галочку."""
+    with db() as conn:
+        cur = conn.cursor()
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_profile_settings (
+            user_id INTEGER PRIMARY KEY,
+            profile_emoji TEXT DEFAULT '👤',
+            display_name TEXT,
+            profile_description TEXT,
+            plus_until TEXT,
+            updated_at TEXT
+        )
+        """)
+
+        for column_sql in [
+            "profile_emoji TEXT DEFAULT '👤'",
+            "display_name TEXT",
+            "profile_description TEXT",
+            "plus_until TEXT",
+            "updated_at TEXT",
+        ]:
+            add_column_if_missing(cur, "user_profile_settings", column_sql)
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS verification_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            reason TEXT,
+            status TEXT DEFAULT 'pending',
+            reviewed_by INTEGER,
+            decision TEXT,
+            created_at TEXT,
+            reviewed_at TEXT
+        )
+        """)
+
+        for column_sql in [
+            "user_id INTEGER",
+            "reason TEXT",
+            "status TEXT DEFAULT 'pending'",
+            "reviewed_by INTEGER",
+            "decision TEXT",
+            "created_at TEXT",
+            "reviewed_at TEXT",
+        ]:
+            add_column_if_missing(cur, "verification_requests", column_sql)
+
+        try:
+            cur.execute("ALTER TABLE users ADD COLUMN display_name TEXT")
+        except sqlite3.OperationalError:
+            pass
+
+        conn.commit()
+
+
+def get_profile_info(user_id: int) -> dict:
+    ensure_profile_tables()
+    now = datetime.now()
+    with db() as conn:
+        user_row = conn.execute("""
+            SELECT COALESCE(username, ''), COALESCE(verified, 0), COALESCE(display_name, '')
+            FROM users
+            WHERE user_id=?
+        """, (user_id,)).fetchone()
+
+        row = conn.execute("""
+            SELECT COALESCE(profile_emoji, '👤'), COALESCE(display_name, ''),
+                   COALESCE(profile_description, ''), plus_until
+            FROM user_profile_settings
+            WHERE user_id=?
+        """, (user_id,)).fetchone()
+
+    username = user_row[0] if user_row else ""
+    verified = int(user_row[1] or 0) if user_row else 0
+    user_display_name = user_row[2] if user_row else ""
+
+    if row:
+        emoji, display_name, description, plus_until = row
+    else:
+        emoji, display_name, description, plus_until = "👤", "", "", None
+
+    if not display_name:
+        display_name = user_display_name or (f"@{username}" if username else f"ID {user_id}")
+
+    plus_active = False
+    plus_days_left = 0
+    if plus_until:
+        try:
+            plus_dt = datetime.fromisoformat(plus_until)
+            plus_active = plus_dt > now
+            plus_days_left = max(0, (plus_dt - now).days)
+        except Exception:
+            plus_active = False
+
+    return {
+        "user_id": user_id,
+        "username": username,
+        "verified": verified,
+        "emoji": emoji or "👤",
+        "display_name": display_name,
+        "description": description or "",
+        "plus_until": plus_until,
+        "plus_active": plus_active,
+        "plus_days_left": plus_days_left,
+        "plus_badge": "💎 LTeam Plus" if plus_active else "⚪ Обычный профиль",
+    }
+
+
+def profile_title(user_id: int) -> str:
+    info = get_profile_info(user_id)
+    check = " ✅" if info["verified"] else ""
+    return f"{info['emoji']} {html.escape(info['display_name'])}{check}"
+
+
+def can_use_premium_profile_features(user_id: int) -> bool:
+    info = get_profile_info(user_id)
+    return bool(info.get("plus_active") or is_staff(user_id))
+
+
+def set_user_plus(user_id: int, days: int, actor_id: int | None = None) -> str:
+    ensure_profile_tables()
+    base = datetime.now()
+    info = get_profile_info(user_id)
+    if info.get("plus_until"):
+        try:
+            current_until = datetime.fromisoformat(info["plus_until"])
+            if current_until > base:
+                base = current_until
+        except Exception:
+            pass
+    until = base + timedelta(days=days)
+    with db() as conn:
+        conn.execute("""
+            INSERT INTO user_profile_settings (user_id, plus_until, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET plus_until=excluded.plus_until, updated_at=excluded.updated_at
+        """, (user_id, until.isoformat(), datetime.now().isoformat()))
+        conn.commit()
+    if actor_id:
+        log_admin_action(actor_id, "grant_lteam_plus", user_id, f"days={days}; until={until.isoformat()}")
+    return until.isoformat()
+
+
+def profile_description_text(user_id: int) -> str:
+    info = get_profile_info(user_id)
+    if info["description"]:
+        return html.escape(info["description"])
+    if can_use_premium_profile_features(user_id):
+        return "Описание ещё не заполнено."
+    return "Описание доступно с подпиской LTeam Plus."
+
+
+def profile_settings_keyboard(user_id: int):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎭 Выбрать эмодзи", callback_data="profile_emoji")],
+        [InlineKeyboardButton(text="📝 Описание профиля", callback_data="profile_description_start")],
+        [InlineKeyboardButton(text="✅ Подать на галочку", callback_data="verification_request_start")],
+        [InlineKeyboardButton(text="💎 LTeam Plus", callback_data="lteam_plus_info")],
+        [InlineKeyboardButton(text="⬅️ Профиль", callback_data="profile")],
+    ])
+
+
+def emoji_keyboard(user_id: int):
+    info = get_profile_info(user_id)
+    plus = bool(info.get("plus_active") or is_staff(user_id))
+    rows = []
+    current = info.get("emoji") or "👤"
+
+    free_buttons = []
+    for emoji in FREE_PROFILE_EMOJIS:
+        label = f"{emoji} ✓" if emoji == current else emoji
+        free_buttons.append(InlineKeyboardButton(text=label, callback_data=f"profile_set_emoji:{emoji}"))
+        if len(free_buttons) == 5:
+            rows.append(free_buttons)
+            free_buttons = []
+    if free_buttons:
+        rows.append(free_buttons)
+
+    premium_buttons = []
+    for emoji in PREMIUM_PROFILE_EMOJIS:
+        label = f"{emoji} ✓" if emoji == current else emoji
+        cb = f"profile_set_emoji:{emoji}" if plus else "lteam_plus_info"
+        premium_buttons.append(InlineKeyboardButton(text=label, callback_data=cb))
+        if len(premium_buttons) == 5:
+            rows.append(premium_buttons)
+            premium_buttons = []
+    if premium_buttons:
+        rows.append(premium_buttons)
+
+    rows.append([InlineKeyboardButton(text="⬅️ Настройки профиля", callback_data="profile_settings")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_beautiful_profile_text(user_id: int) -> str:
+    info = get_profile_info(user_id)
+    security = get_user_security_score(user_id)
+    policy = protect_policy_for_user(user_id)
+
+    with db() as conn:
+        listings_count = conn.execute("SELECT COUNT(*) FROM listings WHERE seller_id=? AND status='active'", (user_id,)).fetchone()[0]
+        purchases_count = conn.execute("SELECT COUNT(*) FROM deals WHERE buyer_id=?", (user_id,)).fetchone()[0]
+        sales_count = conn.execute("SELECT COUNT(*) FROM deals WHERE seller_id=? AND status='completed'", (user_id,)).fetchone()[0]
+        rating_row = conn.execute("SELECT AVG(rating), COUNT(*) FROM reviews WHERE seller_id=?", (user_id,)).fetchone()
+        pending_verification = conn.execute("SELECT id FROM verification_requests WHERE user_id=? AND status='pending' ORDER BY id DESC LIMIT 1", (user_id,)).fetchone()
+
+    avg_rating, reviews_count = rating_row
+    rating_text = "нет отзывов" if avg_rating is None else f"{avg_rating:.1f} ⭐ ({reviews_count})"
+    username_text = f"@{html.escape(info['username'])}" if info.get("username") else "не указан"
+    verification_text = "✅ Верифицирован" if info["verified"] else ("⏳ Заявка на проверке" if pending_verification else "❌ Нет галочки")
+
+    return f"""
+━━━━━━━━━━━━━━
+{profile_title(user_id)}
+━━━━━━━━━━━━━━
+
+🆔 ID: <code>{user_id}</code>
+🔗 Username: <b>{username_text}</b>
+✅ Галочка: <b>{verification_text}</b>
+💎 Подписка: <b>{info['plus_badge']}</b>{f" — {info['plus_days_left']} дн." if info['plus_active'] else ""}
+🏷 Trust Badge: <b>{trust_public_badge(user_id)}</b>
+🛡 Protect: <b>{policy.get('badge')}</b>
+📊 Trust Score: <b>{security.get('score')}/100</b>
+
+━━━━━━━━━━━━━━
+📝 <b>Описание</b>
+━━━━━━━━━━━━━━
+{profile_description_text(user_id)}
+
+━━━━━━━━━━━━━━
+📈 <b>Активность</b>
+━━━━━━━━━━━━━━
+🛒 Покупок: <b>{purchases_count}</b>
+🏪 Продаж: <b>{sales_count}</b>
+📌 Активных объявлений: <b>{listings_count}</b>
+⭐ Рейтинг продавца: <b>{rating_text}</b>
+💰 Баланс к выводу: <b>{get_user_balance(user_id)['available']}₽</b>
+🧊 В обработке: <b>{get_user_balance(user_id)['frozen']}₽</b>{channel_promo_text("profile")}
+"""
+
+
+def beautiful_profile_keyboard(user_id: int):
+    rows = [
+        [InlineKeyboardButton(text="⚙️ Настроить профиль", callback_data="profile_settings")],
+        [InlineKeyboardButton(text="🛡 Trust Passport", callback_data="trust_passport")],
+        [InlineKeyboardButton(text="🛡 Статус Protect", callback_data="protect_status"), InlineKeyboardButton(text="⚖️ Апелляция", callback_data="protect_appeal_start")],
+        [InlineKeyboardButton(text="📦 Мои покупки", callback_data="my_purchases"), InlineKeyboardButton(text="⭐ Избранное", callback_data="favorites")],
+        [InlineKeyboardButton(text="💰 Баланс", callback_data="balance"), InlineKeyboardButton(text="💸 Вывести", callback_data="withdraw_start")],
+        [InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")],
+    ]
+    add_channel_button(rows, "📢 Канал LTeam")
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+# ===== LTEAM TRUST PASSPORT V1 =====
+
+def trust_score_bar(score: int) -> str:
+    score = max(0, min(100, int(score or 0)))
+    filled = max(0, min(10, round(score / 10)))
+    return "█" * filled + "░" * (10 - filled)
+
+
+def trust_public_badge(user_id: int) -> str:
+    """Короткий публичный бейдж доверия для карточек, объявлений и заказов."""
+    try:
+        info = get_profile_info(user_id)
+        if int(info.get("verified") or 0):
+            return "✅ Верифицирован"
+    except Exception:
+        pass
+
+    if is_staff(user_id):
+        return "👑 Official LTeam"
+
+    policy = protect_policy_for_user(user_id)
+    level = policy.get("level")
+    if level == "appeal_approved":
+        return "🟢 Protect approved"
+    if level == "high":
+        return "🔴 Высокий риск"
+    if level == "medium":
+        return "🟡 Требует внимания"
+    return "🟢 Надёжный"
+
+
+def trust_recommendations(user_id: int, security: dict | None = None) -> list[str]:
+    security = security or get_user_security_score(user_id)
+    tips = []
+
+    if security.get("deals_completed", 0) <= 0:
+        tips.append("завершите первую сделку через гаранта LTeam")
+    if security.get("reviews_count", 0) < 3:
+        tips.append("получите несколько честных отзывов")
+    if security.get("bypass_events_count", 0) > 0:
+        tips.append("не отправляйте контакты и не уводите сделки в личку")
+    if security.get("warnings_count", 0) > 0:
+        tips.append("избегайте нарушений правил и спорных формулировок")
+    if not is_staff(user_id):
+        try:
+            if not int(seller_stats(user_id).get("verified") or 0):
+                tips.append("поддерживайте чистую историю, чтобы получить доверие LTeam")
+        except Exception:
+            pass
+
+    if not tips:
+        tips.append("продолжайте проводить сделки только через LTeam")
+    return tips[:5]
+
+
+def trust_passport_text(user_id: int, *, admin_view: bool = False) -> str:
+    security = get_user_security_score(user_id)
+    policy = protect_policy_for_user(user_id)
+    stats = seller_stats(user_id)
+    override_active, override_reason = has_active_protect_override(user_id)
+
+    score = int(security.get("score", 0))
+    public_badge = trust_public_badge(user_id)
+    rating = stats.get("rating_text", "нет отзывов")
+    sales_count = int(stats.get("sales_count") or 0)
+    active_listings = int(stats.get("active_listings") or 0)
+    verified = int(stats.get("verified") or 0)
+
+    reasons = security.get("reasons") or []
+    reasons_text = security_reasons_text(reasons, limit=6)
+    tips_text = "\n".join([f"• {html.escape(tip)}" for tip in trust_recommendations(user_id, security)])
+
+    protect_status = policy.get("badge", security.get("badge", "🟢 Низкий риск"))
+    if override_active:
+        protect_status = f"🟢 Апелляция одобрена — {html.escape(override_reason or 'временное доверие')}"
+
+    title = "🛡 <b>Trust Passport LTeam</b>" if not admin_view else "🛡 <b>Admin Trust View</b>"
+
+    admin_extra = ""
+    if admin_view:
+        admin_extra = f"""
+━━━━━━━━━━━━━━
+🧩 <b>Админ-данные</b>
+━━━━━━━━━━━━━━
+
+🚨 Жалобы: <b>{security.get('reports_count', 0)}</b>
+⚠️ Предупреждения: <b>{security.get('warnings_count', 0)}</b>
+🛡 Security events: <b>{security.get('security_events_count', 0)}</b>
+🚫 Попытки обхода гаранта: <b>{security.get('bypass_events_count', 0)}</b>
+"""
+
+    return f"""
+━━━━━━━━━━━━━━
+{title}
+━━━━━━━━━━━━━━
+
+👤 Пользователь: <code>{user_id}</code>
+🏷 Публичный бейдж: <b>{public_badge}</b>
+🛡 Protect: <b>{protect_status}</b>
+📊 Trust Score: <b>{score}/100</b>
+<code>{trust_score_bar(score)}</code>
+
+━━━━━━━━━━━━━━
+📈 <b>Репутация</b>
+━━━━━━━━━━━━━━
+
+⭐ Рейтинг: <b>{html.escape(str(rating))}</b>
+✅ Завершённых продаж: <b>{sales_count}</b>
+📦 Активных объявлений: <b>{active_listings}</b>
+🛡 Verified: <b>{'да' if verified else 'нет'}</b>
+
+━━━━━━━━━━━━━━
+🧠 <b>Факторы доверия</b>
+━━━━━━━━━━━━━━
+
+{reasons_text}
+
+━━━━━━━━━━━━━━
+💡 <b>Как повысить доверие</b>
+━━━━━━━━━━━━━━
+
+{tips_text}
+{admin_extra}
+"""
+
+
+def trust_passport_keyboard(user_id: int, *, admin_view: bool = False):
+    if admin_view:
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📜 Админ-логи", callback_data=f"admin_user_logs:{user_id}"), InlineKeyboardButton(text="🛡 Security events", callback_data=f"admin_user_security:{user_id}")],
+            [InlineKeyboardButton(text="🚨 Жалобы", callback_data=f"admin_user_reports:{user_id}"), InlineKeyboardButton(text="💬 Чаты", callback_data=f"admin_user_chats:{user_id}")],
+            [InlineKeyboardButton(text="👤 Карточка пользователя", callback_data=f"admin_user:{user_id}")],
+            [InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")],
+        ])
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data="trust_passport")],
+        [InlineKeyboardButton(text="🛡 Статус Protect", callback_data="protect_status"), InlineKeyboardButton(text="⚖️ Апелляция", callback_data="protect_appeal_start")],
+        [InlineKeyboardButton(text="⬅️ Профиль", callback_data="profile")],
+    ])
+
+
+@dp.callback_query(F.data == "trust_passport")
+async def trust_passport(call: CallbackQuery):
+    await show_screen(
+        call,
+        trust_passport_text(call.from_user.id, admin_view=False),
+        reply_markup=trust_passport_keyboard(call.from_user.id, admin_view=False),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@dp.callback_query(F.data.startswith("admin_trust_passport:"))
+async def admin_trust_passport(call: CallbackQuery):
+    if not is_staff(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+    user_id = int(call.data.split(":")[1])
+    ok, reason = can_act(call.from_user.id, user_id, "view_user")
+    if not ok:
+        await call.answer(reason, show_alert=True)
+        return
+    await show_screen(
+        call,
+        trust_passport_text(user_id, admin_view=True),
+        reply_markup=trust_passport_keyboard(user_id, admin_view=True),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+# ===== LTEAM ADMIN CHAT CENTER =====
+
+def admin_recent_deal_chats(limit: int = 10):
+    with db() as conn:
+        return conn.execute("""
+            SELECT d.id,
+                   d.buyer_id,
+                   d.seller_id,
+                   d.status,
+                   COUNT(m.id) AS messages_count,
+                   MAX(m.created_at) AS last_message_at
+            FROM deals d
+            JOIN deal_messages m ON m.deal_id = d.id
+            GROUP BY d.id
+            ORDER BY MAX(m.id) DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+
+
+def admin_recent_order_chats(limit: int = 10):
+    with db() as conn:
+        return conn.execute("""
+            SELECT o.id,
+                   o.customer_id,
+                   o.executor_id,
+                   o.status,
+                   COUNT(m.id) AS messages_count,
+                   MAX(m.created_at) AS last_message_at
+            FROM orders o
+            JOIN order_messages m ON m.order_id = o.id
+            GROUP BY o.id
+            ORDER BY MAX(m.id) DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+
+
+def admin_user_chat_summary(user_id: int, limit: int = 10):
+    with db() as conn:
+        deal_rows = conn.execute("""
+            SELECT d.id, d.buyer_id, d.seller_id, d.status, COUNT(m.id), MAX(m.created_at)
+            FROM deals d
+            JOIN deal_messages m ON m.deal_id=d.id
+            WHERE d.buyer_id=? OR d.seller_id=?
+            GROUP BY d.id
+            ORDER BY MAX(m.id) DESC
+            LIMIT ?
+        """, (user_id, user_id, limit)).fetchall()
+        order_rows = conn.execute("""
+            SELECT o.id, o.customer_id, o.executor_id, o.status, COUNT(m.id), MAX(m.created_at)
+            FROM orders o
+            JOIN order_messages m ON m.order_id=o.id
+            WHERE o.customer_id=? OR o.executor_id=? OR m.sender_id=? OR m.receiver_id=?
+            GROUP BY o.id
+            ORDER BY MAX(m.id) DESC
+            LIMIT ?
+        """, (user_id, user_id, user_id, user_id, limit)).fetchall()
+    return deal_rows, order_rows
+
+
+def short_time(value: str | None) -> str:
+    if not value:
+        return "—"
+    return str(value).replace("T", " ")[:16]
+
+
+@dp.callback_query(F.data == "admin_chat_hint")
+async def admin_chat_hint(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+
+    deal_rows = admin_recent_deal_chats(limit=8)
+    order_rows = admin_recent_order_chats(limit=8)
+
+    text = """
+━━━━━━━━━━━━━━
+💬 <b>Центр чатов LTeam</b>
+━━━━━━━━━━━━━━
+
+Здесь админы могут быстро открыть последние чаты сделок и заказов без ручного ввода ID.
+
+<b>Сделки:</b>
+"""
+    buttons = []
+
+    if deal_rows:
+        for deal_id, buyer_id, seller_id, status, count, last_at in deal_rows:
+            text += f"\n• Сделка <b>#{deal_id}</b> — {count} сообщ. — <code>{short_time(last_at)}</code>"
+            buttons.append([InlineKeyboardButton(text=f"🤝 Сделка #{deal_id} · {count} сообщ.", callback_data=f"admin_deal_chat:{deal_id}")])
+    else:
+        text += "\n• пока нет чатов сделок"
+
+    text += "\n\n<b>Заказы:</b>\n"
+    if order_rows:
+        for order_id, customer_id, executor_id, status, count, last_at in order_rows:
+            text += f"\n• Заказ <b>#{order_id}</b> — {count} сообщ. — <code>{short_time(last_at)}</code>"
+            buttons.append([InlineKeyboardButton(text=f"📌 Заказ #{order_id} · {count} сообщ.", callback_data=f"admin_order_chat:{order_id}")])
+    else:
+        text += "\n• пока нет чатов заказов"
+
+    buttons.append([InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_chat_hint")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")])
+
+    await show_screen(call, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+    await call.answer()
+
+
+@dp.callback_query(F.data.startswith("admin_user_chats:"))
+async def admin_user_chats(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+
+    user_id = int(call.data.split(":")[1])
+    ok, reason = can_act(call.from_user.id, user_id, "view_user")
+    if not ok:
+        await call.answer(reason, show_alert=True)
+        return
+
+    deal_rows, order_rows = admin_user_chat_summary(user_id, limit=8)
+
+    text = f"""
+━━━━━━━━━━━━━━
+💬 <b>Чаты пользователя</b>
+━━━━━━━━━━━━━━
+
+Пользователь: <code>{user_id}</code>
+Бейдж: <b>{trust_public_badge(user_id)}</b>
+
+<b>Сделки:</b>
+"""
+    buttons = []
+
+    if deal_rows:
+        for deal_id, buyer_id, seller_id, status, count, last_at in deal_rows:
+            text += f"\n• Сделка <b>#{deal_id}</b> — {count} сообщ. — <code>{short_time(last_at)}</code>"
+            buttons.append([InlineKeyboardButton(text=f"🤝 Сделка #{deal_id} · {count} сообщ.", callback_data=f"admin_deal_chat:{deal_id}")])
+    else:
+        text += "\n• нет чатов сделок"
+
+    text += "\n\n<b>Заказы:</b>\n"
+    if order_rows:
+        for order_id, customer_id, executor_id, status, count, last_at in order_rows:
+            text += f"\n• Заказ <b>#{order_id}</b> — {count} сообщ. — <code>{short_time(last_at)}</code>"
+            buttons.append([InlineKeyboardButton(text=f"📌 Заказ #{order_id} · {count} сообщ.", callback_data=f"admin_order_chat:{order_id}")])
+    else:
+        text += "\n• нет чатов заказов"
+
+    buttons.append([InlineKeyboardButton(text="🛡 Trust Passport", callback_data=f"admin_trust_passport:{user_id}")])
+    buttons.append([InlineKeyboardButton(text="👤 Карточка пользователя", callback_data=f"admin_user:{user_id}")])
+
+    await show_screen(call, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+    await call.answer()
+
+
+
+# ===== LTEAM FINANCE: БАЛАНС И ВЫВОДЫ V1 =====
+
+class WithdrawalState(StatesGroup):
+    amount = State()
+    requisites = State()
+
+
+def ensure_finance_tables() -> None:
+    """Финансовый контур: баланс исполнителя, заморозка, история и заявки на вывод."""
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_balances (
+            user_id INTEGER PRIMARY KEY,
+            available INTEGER DEFAULT 0,
+            frozen INTEGER DEFAULT 0,
+            total_earned INTEGER DEFAULT 0,
+            total_withdrawn INTEGER DEFAULT 0,
+            updated_at TEXT
+        )
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS balance_transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            deal_id INTEGER,
+            withdrawal_id INTEGER,
+            tx_type TEXT,
+            amount INTEGER,
+            balance_after INTEGER DEFAULT 0,
+            comment TEXT,
+            created_at TEXT
+        )
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS withdrawal_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            amount INTEGER,
+            requisites TEXT,
+            status TEXT DEFAULT 'pending',
+            admin_id INTEGER,
+            admin_comment TEXT,
+            created_at TEXT,
+            resolved_at TEXT
+        )
+        """)
+        for table, columns in {
+            "user_balances": [
+                "available INTEGER DEFAULT 0",
+                "frozen INTEGER DEFAULT 0",
+                "total_earned INTEGER DEFAULT 0",
+                "total_withdrawn INTEGER DEFAULT 0",
+                "updated_at TEXT",
+            ],
+            "balance_transactions": [
+                "user_id INTEGER",
+                "deal_id INTEGER",
+                "withdrawal_id INTEGER",
+                "tx_type TEXT",
+                "amount INTEGER",
+                "balance_after INTEGER DEFAULT 0",
+                "comment TEXT",
+                "created_at TEXT",
+            ],
+            "withdrawal_requests": [
+                "user_id INTEGER",
+                "amount INTEGER",
+                "requisites TEXT",
+                "status TEXT DEFAULT 'pending'",
+                "admin_id INTEGER",
+                "admin_comment TEXT",
+                "created_at TEXT",
+                "resolved_at TEXT",
+            ],
+        }.items():
+            for column_sql in columns:
+                try:
+                    cur.execute(f"ALTER TABLE {table} ADD COLUMN {column_sql}")
+                except sqlite3.OperationalError:
+                    pass
+        conn.commit()
+
+
+def ensure_user_balance(user_id: int) -> None:
+    ensure_finance_tables()
+    with db() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO user_balances (user_id, available, frozen, total_earned, total_withdrawn, updated_at) VALUES (?, 0, 0, 0, 0, ?)",
+            (int(user_id), datetime.now().isoformat()),
+        )
+        conn.commit()
+
+
+def get_user_balance(user_id: int) -> dict:
+    ensure_user_balance(user_id)
+    with db() as conn:
+        row = conn.execute(
+            "SELECT available, frozen, total_earned, total_withdrawn FROM user_balances WHERE user_id=?",
+            (int(user_id),),
+        ).fetchone()
+    available, frozen, total_earned, total_withdrawn = row or (0, 0, 0, 0)
+    return {
+        "available": int(available or 0),
+        "frozen": int(frozen or 0),
+        "total_earned": int(total_earned or 0),
+        "total_withdrawn": int(total_withdrawn or 0),
+    }
+
+
+def add_balance_tx(user_id: int, tx_type: str, amount: int, *, deal_id: int | None = None, withdrawal_id: int | None = None, comment: str = "") -> None:
+    ensure_user_balance(user_id)
+    balance = get_user_balance(user_id)
+    with db() as conn:
+        conn.execute(
+            """
+            INSERT INTO balance_transactions (user_id, deal_id, withdrawal_id, tx_type, amount, balance_after, comment, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (int(user_id), deal_id, withdrawal_id, tx_type, int(amount or 0), balance.get("available", 0), comment, datetime.now().isoformat()),
+        )
+        conn.commit()
+
+
+def freeze_deal_funds(seller_id: int, deal_id: int, amount: int) -> None:
+    """Логируем, что деньги у гаранта. В доступный баланс они попадут только после подтверждения выполнения."""
+    add_balance_tx(seller_id, "escrow_frozen", int(amount or 0), deal_id=deal_id, comment="Оплата подтверждена админом, деньги у гаранта LTeam")
+
+
+def _credit_seller_balance_in_conn(
+    conn: sqlite3.Connection,
+    seller_id: int,
+    deal_id: int,
+    amount: int,
+    *,
+    comment: str = "Сделка завершена покупателем",
+) -> bool:
+    """Идемпотентно зачисляет выплату в уже открытой транзакции."""
+    seller_id = int(seller_id)
+    deal_id = int(deal_id)
+    amount = int(amount or 0)
+
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO user_balances
+        (user_id, available, frozen, total_earned, total_withdrawn, updated_at)
+        VALUES (?, 0, 0, 0, 0, ?)
+        """,
+        (seller_id, datetime.now().isoformat()),
+    )
+
+    already_credited = conn.execute(
+        """
+        SELECT 1
+        FROM balance_transactions
+        WHERE deal_id=? AND tx_type='deal_credit'
+        LIMIT 1
+        """,
+        (deal_id,),
+    ).fetchone()
+    if already_credited:
+        return False
+
+    now = datetime.now().isoformat()
+    conn.execute(
+        """
+        UPDATE user_balances
+        SET available = COALESCE(available,0) + ?,
+            total_earned = COALESCE(total_earned,0) + ?,
+            updated_at = ?
+        WHERE user_id=?
+        """,
+        (amount, amount, now, seller_id),
+    )
+    balance_after_row = conn.execute(
+        "SELECT COALESCE(available,0) FROM user_balances WHERE user_id=?",
+        (seller_id,),
+    ).fetchone()
+    balance_after = int(balance_after_row[0] or 0) if balance_after_row else 0
+    conn.execute(
+        """
+        INSERT INTO balance_transactions
+        (user_id, deal_id, withdrawal_id, tx_type, amount, balance_after, comment, created_at)
+        VALUES (?, ?, NULL, 'deal_credit', ?, ?, ?, ?)
+        """,
+        (seller_id, deal_id, amount, balance_after, comment, now),
+    )
+    return True
+
+
+def credit_seller_balance(seller_id: int, deal_id: int, amount: int) -> bool:
+    """Безопасно и идемпотентно зачисляет выплату исполнителю."""
+    ensure_finance_tables()
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        credited = _credit_seller_balance_in_conn(
+            conn,
+            seller_id,
+            deal_id,
+            amount,
+            comment=f"Сделка #{int(deal_id)} завершена покупателем",
+        )
+        conn.commit()
+    return credited
+
+def reserve_withdrawal(user_id: int, amount: int, requisites: str) -> tuple[bool, str, int | None]:
+    """Атомарно резервирует деньги под вывод и пишет запись в финансовый журнал."""
+    ensure_finance_tables()
+    user_id = int(user_id)
+    amount = int(amount or 0)
+    if amount <= 0:
+        return False, "Сумма должна быть больше нуля.", None
+
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO user_balances
+            (user_id, available, frozen, total_earned, total_withdrawn, updated_at)
+            VALUES (?, 0, 0, 0, 0, ?)
+            """,
+            (user_id, datetime.now().isoformat()),
+        )
+        balance_row = conn.execute(
+            "SELECT COALESCE(available,0) FROM user_balances WHERE user_id=?",
+            (user_id,),
+        ).fetchone()
+        available = int(balance_row[0] or 0) if balance_row else 0
+        if amount > available:
+            return False, f"Недостаточно средств. Доступно: {available}₽.", None
+
+        cur = conn.execute(
+            """
+            INSERT INTO withdrawal_requests (user_id, amount, requisites, status, created_at)
+            VALUES (?, ?, ?, 'pending', ?)
+            """,
+            (user_id, amount, requisites, datetime.now().isoformat()),
+        )
+        withdrawal_id = int(cur.lastrowid)
+        updated = conn.execute(
+            """
+            UPDATE user_balances
+            SET available = COALESCE(available,0) - ?,
+                frozen = COALESCE(frozen,0) + ?,
+                updated_at = ?
+            WHERE user_id=? AND COALESCE(available,0) >= ?
+            """,
+            (amount, amount, datetime.now().isoformat(), user_id, amount),
+        ).rowcount
+        if updated != 1:
+            conn.rollback()
+            return False, "Баланс изменился. Обновите экран и попробуйте снова.", None
+
+        balance_after_row = conn.execute(
+            "SELECT COALESCE(available,0) FROM user_balances WHERE user_id=?",
+            (user_id,),
+        ).fetchone()
+        balance_after = int(balance_after_row[0] or 0) if balance_after_row else 0
+        conn.execute(
+            """
+            INSERT INTO balance_transactions
+            (user_id, deal_id, withdrawal_id, tx_type, amount, balance_after, comment, created_at)
+            VALUES (?, NULL, ?, 'withdrawal_reserved', ?, ?, ?, ?)
+            """,
+            (user_id, withdrawal_id, -amount, balance_after, "Средства зарезервированы под вывод", datetime.now().isoformat()),
+        )
+        conn.commit()
+
+    return True, "ok", withdrawal_id
+
+def complete_withdrawal(withdrawal_id: int, admin_id: int) -> tuple[bool, str, tuple | None]:
+    ensure_finance_tables()
+    with db() as conn:
+        row = conn.execute(
+            "SELECT user_id, amount, requisites, status FROM withdrawal_requests WHERE id=?",
+            (int(withdrawal_id),),
+        ).fetchone()
+        if not row:
+            return False, "Заявка не найдена.", None
+        user_id, amount, requisites, status = row
+        if status != "pending":
+            return False, f"Заявка уже обработана. Статус: {status}", row
+        conn.execute(
+            """
+            UPDATE withdrawal_requests
+            SET status='paid', admin_id=?, admin_comment='Выплата выполнена вручную', resolved_at=?
+            WHERE id=?
+            """,
+            (int(admin_id), datetime.now().isoformat(), int(withdrawal_id)),
+        )
+        conn.execute(
+            """
+            UPDATE user_balances
+            SET frozen = MAX(COALESCE(frozen,0) - ?, 0),
+                total_withdrawn = COALESCE(total_withdrawn,0) + ?,
+                updated_at=?
+            WHERE user_id=?
+            """,
+            (int(amount or 0), int(amount or 0), datetime.now().isoformat(), int(user_id)),
+        )
+        conn.commit()
+    add_balance_tx(user_id, "withdrawal_paid", -int(amount or 0), withdrawal_id=withdrawal_id, comment=f"Выплата подтверждена админом {admin_id}")
+    return True, "ok", row
+
+
+def reject_withdrawal(withdrawal_id: int, admin_id: int, comment: str = "Отклонено админом") -> tuple[bool, str, tuple | None]:
+    ensure_finance_tables()
+    with db() as conn:
+        row = conn.execute(
+            "SELECT user_id, amount, requisites, status FROM withdrawal_requests WHERE id=?",
+            (int(withdrawal_id),),
+        ).fetchone()
+        if not row:
+            return False, "Заявка не найдена.", None
+        user_id, amount, requisites, status = row
+        if status != "pending":
+            return False, f"Заявка уже обработана. Статус: {status}", row
+        conn.execute(
+            """
+            UPDATE withdrawal_requests
+            SET status='rejected', admin_id=?, admin_comment=?, resolved_at=?
+            WHERE id=?
+            """,
+            (int(admin_id), comment, datetime.now().isoformat(), int(withdrawal_id)),
+        )
+        conn.execute(
+            """
+            UPDATE user_balances
+            SET available = COALESCE(available,0) + ?,
+                frozen = MAX(COALESCE(frozen,0) - ?, 0),
+                updated_at=?
+            WHERE user_id=?
+            """,
+            (int(amount or 0), int(amount or 0), datetime.now().isoformat(), int(user_id)),
+        )
+        conn.commit()
+    add_balance_tx(user_id, "withdrawal_rejected", int(amount or 0), withdrawal_id=withdrawal_id, comment=comment)
+    return True, "ok", row
+
+
+def validate_withdrawal_requisites(value: str) -> tuple[bool, str, str]:
+    raw = (value or "").strip()
+    digits = re.sub(r"\D+", "", raw)
+    if not raw:
+        return False, "", "Введите карту или номер телефона для перевода."
+    if any(x in raw.lower() for x in ["t.me/", "@", "http://", "https://", "vk.com", "discord"]):
+        return False, "", "В реквизитах вывода нужна только карта или номер телефона, без ссылок и username."
+    if digits and 10 <= len(digits) <= 19:
+        return True, raw, ""
+    return False, "", "Похоже, реквизиты некорректны. Укажите карту или номер телефона, например: 2200 0000 0000 0000 или +79990000000."
+
+
+def balance_text(user_id: int) -> str:
+    b = get_user_balance(user_id)
+    return f"""
+━━━━━━━━━━━━━━
+💰 <b>Баланс LTeam</b>
+━━━━━━━━━━━━━━
+
+✅ Доступно к выводу: <b>{b['available']}₽</b>
+🧊 Зарезервировано/в обработке: <b>{b['frozen']}₽</b>
+📈 Всего заработано: <b>{b['total_earned']}₽</b>
+💸 Всего выведено: <b>{b['total_withdrawn']}₽</b>
+
+Средства попадают на баланс после того, как покупатель подтвердит выполнение сделки.
+Вывод обрабатывается вручную админом LTeam в течение <b>2 дней</b>.
+"""
+
+
+def balance_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💸 Вывести средства", callback_data="withdraw_start")],
+        [InlineKeyboardButton(text="📜 История баланса", callback_data="balance_history")],
+        [InlineKeyboardButton(text="⬅️ Профиль", callback_data="profile")],
+    ])
+
+
+@dp.callback_query(F.data == "balance")
+async def balance_screen(call: CallbackQuery):
+    ensure_finance_tables()
+    await show_screen(call, balance_text(call.from_user.id), reply_markup=balance_keyboard(), parse_mode="HTML")
+    await call.answer()
+
+
+@dp.callback_query(F.data == "balance_history")
+async def balance_history(call: CallbackQuery):
+    ensure_finance_tables()
+    with db() as conn:
+        rows = conn.execute(
+            """
+            SELECT tx_type, amount, comment, created_at
+            FROM balance_transactions
+            WHERE user_id=?
+            ORDER BY id DESC
+            LIMIT 12
+            """,
+            (call.from_user.id,),
+        ).fetchall()
+    if not rows:
+        text = "📜 <b>История баланса</b>\n\nПока операций нет."
+    else:
+        lines = []
+        for tx_type, amount, comment, created_at in rows:
+            sign = "+" if int(amount or 0) > 0 else ""
+            lines.append(f"• <b>{html.escape(tx_type or '')}</b>: {sign}{int(amount or 0)}₽ — {html.escape(comment or '')} <code>{short_time(created_at)}</code>")
+        text = "📜 <b>История баланса</b>\n\n" + "\n".join(lines)
+    await show_screen(call, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Баланс", callback_data="balance")]]), parse_mode="HTML")
+    await call.answer()
+
+
+@dp.callback_query(F.data == "withdraw_start")
+async def withdraw_start(call: CallbackQuery, state: FSMContext):
+    b = get_user_balance(call.from_user.id)
+    if b["available"] <= 0:
+        await call.answer("Нет средств для вывода", show_alert=True)
+        await show_screen(call, balance_text(call.from_user.id), reply_markup=balance_keyboard(), parse_mode="HTML")
+        return
+    await state.set_state(WithdrawalState.amount)
+    await show_screen(
+        call,
+        f"""
+━━━━━━━━━━━━━━
+💸 <b>Вывод средств</b>
+━━━━━━━━━━━━━━
+
+Доступно: <b>{b['available']}₽</b>
+
+Введите сумму вывода числом.
+
+⚠️ Выплата выполняется вручную админом LTeam в течение <b>2 дней</b>.
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Баланс", callback_data="balance")]]),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@dp.message(WithdrawalState.amount)
+async def withdraw_amount_save(message: Message, state: FSMContext):
+    amount = parse_money(message.text or "")
+    b = get_user_balance(message.from_user.id)
+    if not amount or amount <= 0:
+        await screen_answer(message, "❌ Введите сумму числом, например: <code>1500</code>", parse_mode="HTML")
+        return
+    if amount > b["available"]:
+        await screen_answer(message, f"❌ Недостаточно средств. Доступно: <b>{b['available']}₽</b>", parse_mode="HTML")
+        return
+    await state.update_data(withdraw_amount=int(amount))
+    await state.set_state(WithdrawalState.requisites)
+    await screen_answer(
+        message,
+        f"""
+💳 <b>Реквизиты для вывода</b>
+
+Сумма: <b>{amount}₽</b>
+
+Отправьте карту или номер телефона, куда админ переведёт деньги.
+
+⚠️ Выплата выполняется в течение <b>2 дней</b>.
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Баланс", callback_data="balance")]]),
+        parse_mode="HTML",
+    )
+
+
+@dp.message(WithdrawalState.requisites)
+async def withdraw_requisites_save(message: Message, state: FSMContext):
+    data = await state.get_data()
+    amount = int(data.get("withdraw_amount") or 0)
+    ok, requisites, error = validate_withdrawal_requisites(message.text or "")
+    if not ok:
+        await screen_answer(message, f"❌ {html.escape(error)}", parse_mode="HTML")
+        return
+    success, msg, withdrawal_id = reserve_withdrawal(message.from_user.id, amount, requisites)
+    if not success:
+        await state.clear()
+        await screen_answer(message, f"❌ {html.escape(msg)}", reply_markup=balance_keyboard(), parse_mode="HTML")
+        return
+    await state.clear()
+    await screen_answer(
+        message,
+        f"""
+✅ <b>Заявка на вывод создана</b>
+
+ID заявки: <b>#{withdrawal_id}</b>
+Сумма: <b>{amount}₽</b>
+
+Средства зарезервированы. Админ LTeam выполнит перевод вручную в течение <b>2 дней</b>.
+""",
+        reply_markup=balance_keyboard(),
+        parse_mode="HTML",
+    )
+    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Выплачено", callback_data=f"admin_withdraw_paid:{withdrawal_id}"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"admin_withdraw_reject:{withdrawal_id}"),
+        ],
+        [InlineKeyboardButton(text="👤 Пользователь", callback_data=f"admin_user:{message.from_user.id}")],
+        [InlineKeyboardButton(text="💸 Все выводы", callback_data="admin_withdrawals")],
+    ])
+    await notify_admins(
+        f"""
+💸 <b>Новая заявка на вывод</b>
+
+ID: <b>#{withdrawal_id}</b>
+Пользователь: <code>{message.from_user.id}</code>
+Сумма: <b>{amount}₽</b>
+
+Реквизиты:
+<code>{html.escape(requisites)}</code>
+
+⚠️ Выполнить вручную в течение <b>2 дней</b>.
+""",
+        reply_markup=admin_kb,
+    )
+
+
+@dp.callback_query(F.data == "admin_withdrawals")
+async def admin_withdrawals(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+    ensure_finance_tables()
+    with db() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, user_id, amount, requisites, created_at
+            FROM withdrawal_requests
+            WHERE status='pending'
+            ORDER BY id ASC
+            LIMIT 20
+            """,
+        ).fetchall()
+    if not rows:
+        await show_screen(call, "💸 <b>Заявки на вывод</b>\n\nАктивных заявок нет.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")]]), parse_mode="HTML")
+        await call.answer()
+        return
+    text = "💸 <b>Заявки на вывод</b>\n\n"
+    buttons = []
+    for wid, user_id, amount, requisites, created_at in rows:
+        text += f"• <b>#{wid}</b> — <code>{user_id}</code> — <b>{amount}₽</b> — <code>{short_time(created_at)}</code>\n"
+        buttons.append([InlineKeyboardButton(text=f"#{wid} · {amount}₽ · {user_id}", callback_data=f"admin_withdraw_view:{wid}")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")])
+    await show_screen(call, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+    await call.answer()
+
+
+@dp.callback_query(F.data.startswith("admin_withdraw_view:"))
+async def admin_withdraw_view(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+    wid = int(call.data.split(":")[1])
+    ensure_finance_tables()
+    with db() as conn:
+        row = conn.execute(
+            "SELECT user_id, amount, requisites, status, created_at FROM withdrawal_requests WHERE id=?",
+            (wid,),
+        ).fetchone()
+    if not row:
+        await call.answer("Заявка не найдена", show_alert=True)
+        return
+    user_id, amount, requisites, status, created_at = row
+    await show_screen(
+        call,
+        f"""
+💸 <b>Заявка на вывод #{wid}</b>
+
+Пользователь: <code>{user_id}</code>
+Сумма: <b>{amount}₽</b>
+Статус: <b>{html.escape(status or '')}</b>
+Создана: <code>{short_time(created_at)}</code>
+
+Реквизиты:
+<code>{html.escape(requisites or '')}</code>
+
+⚠️ Выплата вручную, срок до <b>2 дней</b>.
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Выплачено", callback_data=f"admin_withdraw_paid:{wid}"), InlineKeyboardButton(text="❌ Отклонить", callback_data=f"admin_withdraw_reject:{wid}")],
+            [InlineKeyboardButton(text="👤 Пользователь", callback_data=f"admin_user:{user_id}")],
+            [InlineKeyboardButton(text="⬅️ Все выводы", callback_data="admin_withdrawals")],
+        ]),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@dp.callback_query(F.data.startswith("admin_withdraw_paid:"))
+async def admin_withdraw_paid(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+    wid = int(call.data.split(":")[1])
+    ok, msg, row = complete_withdrawal(wid, call.from_user.id)
+    if not ok:
+        await call.answer(msg, show_alert=True)
+        return
+    user_id, amount, requisites, status = row
+    log_admin_action(call.from_user.id, "withdrawal_paid", user_id, f"withdrawal_id={wid}; amount={amount}")
+    await bot.send_message(user_id, f"✅ Вывод #{wid} на сумму <b>{int(amount or 0)}₽</b> выполнен админом LTeam.", parse_mode="HTML")
+    await call.message.edit_text(f"✅ Вывод #{wid} отмечен как выплаченный.\n\nПользователь: <code>{user_id}</code>\nСумма: <b>{int(amount or 0)}₽</b>", parse_mode="HTML")
+    await call.answer("Выплата отмечена")
+
+
+@dp.callback_query(F.data.startswith("admin_withdraw_reject:"))
+async def admin_withdraw_reject(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+    wid = int(call.data.split(":")[1])
+    ok, msg, row = reject_withdrawal(wid, call.from_user.id, "Отклонено админом. Средства возвращены на баланс.")
+    if not ok:
+        await call.answer(msg, show_alert=True)
+        return
+    user_id, amount, requisites, status = row
+    log_admin_action(call.from_user.id, "withdrawal_rejected", user_id, f"withdrawal_id={wid}; amount={amount}")
+    await bot.send_message(user_id, f"❌ Вывод #{wid} на сумму <b>{int(amount or 0)}₽</b> отклонён. Средства возвращены на баланс.", parse_mode="HTML")
+    await call.message.edit_text(f"❌ Вывод #{wid} отклонён. Средства возвращены пользователю <code>{user_id}</code>.", parse_mode="HTML")
+    await call.answer("Отклонено")
+
 # ===== ПРОФИЛЬ =====
 
 @dp.callback_query(F.data == "profile")
 async def profile(call: CallbackQuery):
-    user_id = call.from_user.id
-
-    with db() as conn:
-        username = conn.execute(
-            "SELECT username FROM users WHERE user_id=?",
-            (user_id,),
-        ).fetchone()
-
-        listings_count = conn.execute(
-            "SELECT COUNT(*) FROM listings WHERE seller_id=? AND status='active'",
-            (user_id,),
-        ).fetchone()[0]
-
-        purchases_count = conn.execute(
-            "SELECT COUNT(*) FROM deals WHERE buyer_id=?",
-            (user_id,),
-        ).fetchone()[0]
-
-        sales_count = conn.execute(
-            "SELECT COUNT(*) FROM deals WHERE seller_id=? AND status='completed'",
-            (user_id,),
-        ).fetchone()[0]
-
-        rating_row = conn.execute(
-            "SELECT AVG(rating), COUNT(*) FROM reviews WHERE seller_id=?",
-            (user_id,),
-        ).fetchone()
-
-    username_text = username[0] if username and username[0] else "не указан"
-    avg_rating, reviews_count = rating_row
-    rating_text = "нет отзывов" if avg_rating is None else f"{avg_rating:.1f} ⭐ ({reviews_count})"
-
-    user_status = "✅ Активный пользователь" if purchases_count + sales_count > 0 else "🆕 Новый пользователь"
-    seller_status = "✅ Проверенный продавец" if sales_count >= 3 and avg_rating and avg_rating >= 4.5 else "Обычный продавец"
-
-    await show_screen(call, 
-        f"""
-━━━━━━━━━━━━━━
-👤 <b>Профиль</b>
-━━━━━━━━━━━━━━
-
-{user_status}
-
-🆔 ID: <code>{user_id}</code>
-🔗 Username: @{username_text}
-
-🛒 Покупок: <b>{purchases_count}</b>
-🏪 Продаж: <b>{sales_count}</b>
-📌 Объявлений: <b>{listings_count}</b>
-
-⭐ Рейтинг продавца: <b>{rating_text}</b>
-🏷 Статус продавца: <b>{seller_status}</b>
-""",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="🏪 Кабинет продавца", callback_data="profile")],
-                [InlineKeyboardButton(text="📦 Мои покупки", callback_data="my_purchases")],
-                [InlineKeyboardButton(text="⭐ Избранное", callback_data="favorites")],
-                [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="home")],
-            ]
-        ),
-        parse_mode="HTML"
+    ensure_profile_tables()
+    await show_screen(
+        call,
+        build_beautiful_profile_text(call.from_user.id),
+        reply_markup=beautiful_profile_keyboard(call.from_user.id),
+        parse_mode="HTML",
     )
     await call.answer()
+
+
+@dp.callback_query(F.data == "profile_settings")
+async def profile_settings(call: CallbackQuery):
+    ensure_profile_tables()
+    info = get_profile_info(call.from_user.id)
+    await show_screen(
+        call,
+        f"""
+━━━━━━━━━━━━━━
+⚙️ <b>Настройки профиля</b>
+━━━━━━━━━━━━━━
+
+Профиль: <b>{profile_title(call.from_user.id)}</b>
+Подписка: <b>{info['plus_badge']}</b>
+
+🎭 <b>Эмодзи</b> — значок возле профиля.
+✅ <b>Галочка</b> — ручная верификация владельцами.
+📝 <b>Описание</b> — доступно с LTeam Plus.
+""",
+        reply_markup=profile_settings_keyboard(call.from_user.id),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@dp.callback_query(F.data == "profile_emoji")
+async def profile_emoji(call: CallbackQuery):
+    info = get_profile_info(call.from_user.id)
+    await show_screen(
+        call,
+        f"""
+━━━━━━━━━━━━━━
+🎭 <b>Эмодзи профиля</b>
+━━━━━━━━━━━━━━
+
+Текущий эмодзи: <b>{html.escape(info['emoji'])}</b>
+
+🆓 Верхние эмодзи доступны всем.
+💎 Премиальные эмодзи доступны с LTeam Plus.
+""",
+        reply_markup=emoji_keyboard(call.from_user.id),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@dp.callback_query(F.data.startswith("profile_set_emoji:"))
+async def profile_set_emoji(call: CallbackQuery):
+    emoji = call.data.split(":", 1)[1]
+    if emoji in PREMIUM_PROFILE_EMOJIS and not can_use_premium_profile_features(call.from_user.id):
+        await call.answer("Премиальные эмодзи доступны с LTeam Plus", show_alert=True)
+        return
+    if emoji not in FREE_PROFILE_EMOJIS and emoji not in PREMIUM_PROFILE_EMOJIS:
+        await call.answer("Этот эмодзи недоступен", show_alert=True)
+        return
+    ensure_profile_tables()
+    with db() as conn:
+        conn.execute("""
+            INSERT INTO user_profile_settings (user_id, profile_emoji, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET profile_emoji=excluded.profile_emoji, updated_at=excluded.updated_at
+        """, (call.from_user.id, emoji, datetime.now().isoformat()))
+        conn.commit()
+    await call.answer("Эмодзи обновлён", show_alert=True)
+    await profile_emoji(call)
+
+
+@dp.callback_query(F.data == "profile_description_start")
+async def profile_description_start(call: CallbackQuery, state: FSMContext):
+    if not can_use_premium_profile_features(call.from_user.id):
+        await show_screen(
+            call,
+            """
+━━━━━━━━━━━━━━
+📝 <b>Описание профиля</b>
+━━━━━━━━━━━━━━
+
+Описание профиля доступно с <b>💎 LTeam Plus</b>.
+
+С подпиской можно добавить короткое описание: чем вы занимаетесь, какие услуги оказываете и почему вам можно доверять.
+""",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💎 Узнать про LTeam Plus", callback_data="lteam_plus_info")],
+                [InlineKeyboardButton(text="⬅️ Настройки профиля", callback_data="profile_settings")],
+            ]),
+            parse_mode="HTML",
+        )
+        await call.answer()
+        return
+
+    await state.set_state(ProfileDescriptionState.text)
+    await show_screen(
+        call,
+        """
+━━━━━━━━━━━━━━
+📝 <b>Описание профиля</b>
+━━━━━━━━━━━━━━
+
+Отправьте описание профиля одним сообщением.
+
+Правила:
+• до 400 символов;
+• без контактов;
+• без запрещённых тем;
+• по делу: навыки, опыт, услуги.
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Настройки профиля", callback_data="profile_settings")],
+        ]),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@dp.message(ProfileDescriptionState.text)
+async def profile_description_save(message: Message, state: FSMContext):
+    if not can_use_premium_profile_features(message.from_user.id):
+        await state.clear()
+        await screen_answer(message, "Описание доступно только с LTeam Plus.", reply_markup=back_home())
+        return
+    text = (message.text or "").strip()
+    if len(text) < 20:
+        await screen_answer(message, "Описание слишком короткое. Напишите хотя бы 20 символов.")
+        return
+    if len(text) > 400:
+        await screen_answer(message, "Описание слишком длинное. Максимум 400 символов.")
+        return
+    ok, reason = moderation_check(text, allow_contacts=False)
+    if not ok or looks_like_bypass_attempt(text):
+        await screen_answer(message, f"❌ Описание не прошло модерацию: {html.escape(reason or 'контакты/обход гаранта')}", parse_mode="HTML")
+        return
+    ensure_profile_tables()
+    with db() as conn:
+        conn.execute("""
+            INSERT INTO user_profile_settings (user_id, profile_description, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET profile_description=excluded.profile_description, updated_at=excluded.updated_at
+        """, (message.from_user.id, text, datetime.now().isoformat()))
+        conn.commit()
+    await state.clear()
+    await screen_answer(message, "✅ Описание профиля обновлено.", reply_markup=beautiful_profile_keyboard(message.from_user.id), parse_mode="HTML")
+
+
+@dp.callback_query(F.data == "lteam_plus_info")
+async def lteam_plus_info(call: CallbackQuery):
+    info = get_profile_info(call.from_user.id)
+    await show_screen(
+        call,
+        f"""
+━━━━━━━━━━━━━━
+💎 <b>LTeam Plus</b>
+━━━━━━━━━━━━━━
+
+Текущий статус: <b>{info['plus_badge']}</b>{f" — осталось {info['plus_days_left']} дн." if info['plus_active'] else ""}
+
+Что даёт подписка:
+• 💎 премиальные эмодзи профиля;
+• 📝 описание профиля;
+• 🏷 статус <b>LTeam Plus</b> в профиле;
+• будущие Plus-функции без переделки аккаунта.
+
+Оплата подписки будет проходить через LTeam. Пока включение подписки доступно через владельцев/админов.
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🆘 Написать в поддержку", callback_data="support")],
+            [InlineKeyboardButton(text="⬅️ Настройки профиля", callback_data="profile_settings")],
+        ]),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@dp.callback_query(F.data == "verification_request_start")
+async def verification_request_start(call: CallbackQuery, state: FSMContext):
+    ensure_profile_tables()
+    info = get_profile_info(call.from_user.id)
+    if info.get("verified"):
+        await call.answer("У вас уже есть галочка", show_alert=True)
+        return
+    with db() as conn:
+        pending = conn.execute("SELECT id FROM verification_requests WHERE user_id=? AND status='pending' ORDER BY id DESC LIMIT 1", (call.from_user.id,)).fetchone()
+    if pending:
+        await show_screen(call, f"⏳ Ваша заявка на галочку уже на проверке. Номер заявки: <b>#{pending[0]}</b>", reply_markup=profile_settings_keyboard(call.from_user.id), parse_mode="HTML")
+        await call.answer()
+        return
+    await state.set_state(VerificationRequestState.reason)
+    await show_screen(
+        call,
+        """
+━━━━━━━━━━━━━━
+✅ <b>Заявка на галочку</b>
+━━━━━━━━━━━━━━
+
+Галочка выдаётся вручную владельцами LTeam.
+
+Напишите, почему вам можно выдать верификацию:
+• чем занимаетесь;
+• есть ли завершённые сделки;
+• почему вам можно доверять;
+• какую пользу даёте пользователям LTeam.
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Настройки профиля", callback_data="profile_settings")],
+        ]),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@dp.message(VerificationRequestState.reason)
+async def verification_request_save(message: Message, state: FSMContext):
+    reason = (message.text or "").strip()
+    if len(reason) < 20:
+        await screen_answer(message, "Напишите подробнее: минимум 20 символов.")
+        return
+    if len(reason) > 1000:
+        await screen_answer(message, "Слишком длинно. Максимум 1000 символов.")
+        return
+    ok, mod_reason = moderation_check(reason, allow_contacts=True)
+    if not ok:
+        await screen_answer(message, f"❌ Текст не прошёл модерацию: {html.escape(mod_reason)}", parse_mode="HTML")
+        return
+    ensure_profile_tables()
+    with db() as conn:
+        cur = conn.execute("""
+            INSERT INTO verification_requests (user_id, reason, status, created_at)
+            VALUES (?, ?, 'pending', ?)
+        """, (message.from_user.id, reason, datetime.now().isoformat()))
+        req_id = cur.lastrowid
+        conn.commit()
+    await state.clear()
+    for owner_id in OWNER_IDS:
+        try:
+            await bot.send_message(
+                owner_id,
+                f"""
+✅ <b>Новая заявка на галочку</b>
+
+Заявка: <b>#{req_id}</b>
+Пользователь: <code>{message.from_user.id}</code>
+Профиль: <b>{profile_title(message.from_user.id)}</b>
+
+Причина:
+{html.escape(reason[:700])}
+""",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="✅ Одобрить", callback_data=f"verify_req_approve:{req_id}"), InlineKeyboardButton(text="❌ Отклонить", callback_data=f"verify_req_reject:{req_id}")],
+                    [InlineKeyboardButton(text="👤 Профиль", callback_data=f"admin_user:{message.from_user.id}")],
+                ]),
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+    await screen_answer(message, f"✅ Заявка на галочку отправлена владельцам. Номер заявки: <b>#{req_id}</b>", reply_markup=beautiful_profile_keyboard(message.from_user.id), parse_mode="HTML")
 
 
 # ===== АДМИНКА =====
@@ -4464,7 +8342,14 @@ async def admin_user_profile(call: CallbackQuery):
         return
 
     user_id = int(call.data.split(":")[1])
+
+    ok, reason = can_act(call.from_user.id, user_id, "view_user")
+    if not ok:
+        await call.answer(reason, show_alert=True)
+        return
+
     stats = seller_stats(user_id)
+    risk = get_user_security_score(user_id)
 
     with db() as conn:
         user_row = conn.execute("SELECT username, created_at, COALESCE(verified,0) FROM users WHERE user_id=?", (user_id,)).fetchone()
@@ -4480,10 +8365,11 @@ async def admin_user_profile(call: CallbackQuery):
             FROM reports r
             LEFT JOIN listings l ON l.id = r.listing_id
             LEFT JOIN orders o ON o.id = COALESCE(r.target_id, 0) AND COALESCE(r.target_type,'listing')='order'
-            WHERE l.seller_id=? OR o.customer_id=?
-        """, (user_id, user_id)).fetchone()[0]
+            WHERE COALESCE(r.target_id, 0)=? OR l.seller_id=? OR o.customer_id=?
+        """, (user_id, user_id, user_id)).fetchone()[0]
         warnings_count = conn.execute("SELECT COUNT(*) FROM admin_warnings WHERE user_id=?", (user_id,)).fetchone()[0]
         banned = conn.execute("SELECT reason, created_at, banned_by FROM banned_users WHERE user_id=?", (user_id,)).fetchone()
+        mute = conn.execute("SELECT muted_until, reason, muted_by FROM muted_users WHERE user_id=?", (user_id,)).fetchone()
         last_deal = conn.execute("SELECT id, status, amount, created_at FROM deals WHERE buyer_id=? OR seller_id=? ORDER BY id DESC LIMIT 1", (user_id, user_id)).fetchone()
 
     username = (user_row[0] if user_row and user_row[0] else stats.get("username", "не указан"))
@@ -4492,6 +8378,16 @@ async def admin_user_profile(call: CallbackQuery):
     ban_line = ""
     if banned:
         ban_line = f"\nПричина: <b>{html.escape(banned[0] or 'не указана')}</b>\nДата: <code>{html.escape(str(banned[1])[:16])}</code> • Админ: <code>{banned[2]}</code>"
+
+    mute_line = ""
+    if mute:
+        try:
+            muted_until = datetime.fromisoformat(mute[0])
+            if muted_until > datetime.now():
+                mute_line = f"\n🔇 Мут до: <code>{muted_until.strftime('%d.%m %H:%M')}</code> • {html.escape(mute[1] or 'без причины')}"
+        except Exception:
+            pass
+
     verify_status = "🛡 LTeam Verified" if stats.get("verified") else "—"
     last_deal_text = "нет"
     if last_deal:
@@ -4506,9 +8402,15 @@ async def admin_user_profile(call: CallbackQuery):
 🆔 ID: <code>{user_id}</code>
 🔗 Username: @{html.escape(username)}
 📅 Регистрация: <b>{html.escape(str(created_at)[:10])}</b>
-🚦 Доступ: <b>{ban_status}</b>{ban_line}
 🎚 Роль: <b>{role_badge(user_id)}</b>
 🛡 Верификация: <b>{verify_status}</b>
+🚦 Доступ: <b>{ban_status}</b>{ban_line}{mute_line}
+
+🛡 <b>Security Score</b>
+Уровень: <b>{risk['badge']}</b>
+Балл риска: <b>{risk['score']}/100</b>
+Главные факторы:
+{security_reasons_text(risk['reasons'], limit=4)}
 
 📦 Активных объявлений: <b>{stats['active_listings']}</b>
 ⏳ Объявлений на модерации: <b>{moderation_listings}</b>
@@ -4526,15 +8428,126 @@ async def admin_user_profile(call: CallbackQuery):
 ⚠️ Предупреждений: <b>{warnings_count}</b>
 🆘 Обращений в поддержку: <b>{tickets_count}</b>
 """,
+        reply_markup=admin_user_actions_keyboard(call.from_user.id, user_id),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+@dp.callback_query(F.data.startswith("admin_user_security:"))
+async def admin_user_security(call: CallbackQuery):
+    if not is_staff(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+
+    user_id = int(call.data.split(":")[1])
+    ok, reason = can_act(call.from_user.id, user_id, "view_user")
+    if not ok:
+        await call.answer(reason, show_alert=True)
+        return
+
+    risk = get_user_security_score(user_id)
+
+    with db() as conn:
+        events = conn.execute("""
+            SELECT event_type, context, text, status, created_at
+            FROM security_events
+            WHERE user_id=?
+            ORDER BY id DESC
+            LIMIT 10
+        """, (user_id,)).fetchall()
+
+    lines = []
+    for event_type, context, text, status, created_at in events:
+        lines.append(
+            f"• <b>{html.escape(event_type or 'event')}</b> "
+            f"<code>{html.escape(str(created_at or '')[:16])}</code>\n"
+            f"Контекст: {html.escape(context or '—')}\n"
+            f"Статус: {html.escape(status or '—')}\n"
+            f"Текст: {html.escape((text or '')[:250])}"
+        )
+
+    events_text = "\n\n".join(lines) if lines else "Событий безопасности пока нет."
+
+    await show_screen(call,
+        f"""
+━━━━━━━━━━━━━━
+🛡 <b>Security пользователя</b>
+━━━━━━━━━━━━━━
+
+Пользователь: <code>{user_id}</code>
+Уровень: <b>{risk['badge']}</b>
+Балл риска: <b>{risk['score']}/100</b>
+
+<b>Факторы:</b>
+{security_reasons_text(risk['reasons'], limit=12)}
+
+<b>Метрики:</b>
+🚨 Жалоб на пользователя: <b>{risk['reports_on_user']}</b>
+⚠️ Предупреждений: <b>{risk['warnings_count']}</b>
+🛡 Security events: <b>{risk['security_events_count']}</b>
+↪️ Попыток увести сделку: <b>{risk['bypass_events_count']}</b>
+✅ Завершённых сделок: <b>{risk['completed_deals']}</b>
+⭐ Отзывов: <b>{risk['reviews_count']}</b>, рейтинг: <b>{risk['avg_rating']:.1f}</b>
+
+<b>Последние события:</b>
+{events_text}
+""",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📦 Объявления", callback_data=f"admin_user_listings:{user_id}"), InlineKeyboardButton(text="📌 Заказы", callback_data=f"admin_user_orders:{user_id}")],
-            [InlineKeyboardButton(text="💼 Сделки", callback_data=f"admin_user_deals:{user_id}"), InlineKeyboardButton(text="🚨 Жалобы", callback_data=f"admin_user_reports:{user_id}")],
-            [InlineKeyboardButton(text="⚠️ Предупреждения", callback_data=f"admin_user_warnings:{user_id}"), InlineKeyboardButton(text="✉️ Написать", callback_data=f"admin_msg_user:{user_id}")],
-            [InlineKeyboardButton(text="🛡 Выдать Verified", callback_data=f"admin_verify_user:{user_id}"), InlineKeyboardButton(text="❌ Снять Verified", callback_data=f"admin_unverify_user:{user_id}")],
-            [InlineKeyboardButton(text="⚠️ Выдать предупреждение", callback_data=f"admin_warn_user:{user_id}"), InlineKeyboardButton(text="🔇 Мут", callback_data=f"admin_mute_user:{user_id}")],
-            [InlineKeyboardButton(text="👑 Назначить роль", callback_data=f"admin_role_choose:{user_id}")],
-            [InlineKeyboardButton(text="🚫 Забанить", callback_data=f"admin_ban_user:{user_id}"), InlineKeyboardButton(text="✅ Разбанить", callback_data=f"admin_unban_user:{user_id}")],
-            [InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")],
+            [InlineKeyboardButton(text="⬅️ Карточка пользователя", callback_data=f"admin_user:{user_id}")],
+            [InlineKeyboardButton(text="⚙️ Админ-панель", callback_data="admin_panel")],
+        ]),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@dp.callback_query(F.data.startswith("admin_user_logs:"))
+async def admin_user_logs(call: CallbackQuery):
+    if not is_staff(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+
+    user_id = int(call.data.split(":")[1])
+    ok, reason = can_act(call.from_user.id, user_id, "view_reports")
+    if not ok:
+        await call.answer(reason, show_alert=True)
+        return
+
+    with db() as conn:
+        rows = conn.execute("""
+            SELECT actor_id, action, details, created_at
+            FROM admin_action_logs
+            WHERE target_id=?
+            ORDER BY id DESC
+            LIMIT 15
+        """, (user_id,)).fetchall()
+
+    if not rows:
+        text = f"📜 По пользователю <code>{user_id}</code> пока нет админ-логов."
+    else:
+        items = []
+        for actor_id, action, details, created_at in rows:
+            items.append(
+                f"• <code>{html.escape(str(created_at or '')[:16])}</code>\n"
+                f"Админ: <code>{actor_id}</code>\n"
+                f"Действие: <b>{html.escape(action or '—')}</b>\n"
+                f"Детали: {html.escape((details or '—')[:300])}"
+            )
+        text = f"""
+━━━━━━━━━━━━━━
+📜 <b>Админ-логи пользователя</b>
+━━━━━━━━━━━━━━
+
+Пользователь: <code>{user_id}</code>
+
+{"\n\n".join(items)}
+"""
+
+    await show_screen(call,
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Карточка пользователя", callback_data=f"admin_user:{user_id}")],
+            [InlineKeyboardButton(text="⚙️ Админ-панель", callback_data="admin_panel")],
         ]),
         parse_mode="HTML",
     )
@@ -5016,7 +9029,13 @@ async def orders(call: CallbackQuery):
 @dp.callback_query(F.data == "order_cancel")
 async def order_cancel(call: CallbackQuery, state: FSMContext):
     await state.clear()
-    await show_screen(call, "❌ Создание заказа отменено.", reply_markup=main_menu(call.from_user.id), parse_mode="HTML")
+    await show_screen(call, """
+━━━━━━━━━━━━━━
+❌ <b>Создание заказа отменено</b>
+━━━━━━━━━━━━━━
+
+Вы можете вернуться в меню или начать заново в любой момент.
+""", reply_markup=main_menu(call.from_user.id), parse_mode="HTML")
     await call.answer()
 
 
@@ -5040,8 +9059,28 @@ def deadline_options_keyboard(prefix: str, cancel_callback: str):
     ])
 
 
+def listing_delivery_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⚡ Срочно / сегодня", callback_data="listing_delivery:Срочно / сегодня"),
+            InlineKeyboardButton(text="1 день", callback_data="listing_delivery:1 день"),
+        ],
+        [
+            InlineKeyboardButton(text="2-3 дня", callback_data="listing_delivery:2-3 дня"),
+            InlineKeyboardButton(text="до 1 недели", callback_data="listing_delivery:до 1 недели"),
+        ],
+        [
+            InlineKeyboardButton(text="1-2 недели", callback_data="listing_delivery:1-2 недели"),
+            InlineKeyboardButton(text="до 1 месяца", callback_data="listing_delivery:до 1 месяца"),
+        ],
+        [InlineKeyboardButton(text="🤝 По договорённости", callback_data="listing_delivery:по договорённости")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="listing_back_type"), InlineKeyboardButton(text="❌ Отменить", callback_data="listing_cancel")],
+    ])
+
+
 def delivery_time_keyboard():
-    return deadline_options_keyboard("listing_delivery", "listing_cancel")
+    # оставляем старое имя для совместимости, но теперь с кнопкой назад
+    return listing_delivery_keyboard()
 
 
 def order_deadline_keyboard():
@@ -5049,35 +9088,114 @@ def order_deadline_keyboard():
 
 
 def order_cancel_keyboard(extra_rows=None):
-    rows = extra_rows or []
+    rows = list(extra_rows or [])
+    rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")])
     rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="order_cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def order_nav_keyboard(back_callback: str | None = None, extra_rows=None) -> InlineKeyboardMarkup:
+    rows = list(extra_rows or [])
+    nav = []
+    if back_callback:
+        nav.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback))
+    nav.append(InlineKeyboardButton(text="❌ Отменить", callback_data="order_cancel"))
+    rows.append(nav)
+    rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def order_category_keyboard() -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text=cat, callback_data=f"order_cat:{cat}")] for cat in CATEGORIES]
+    rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"), InlineKeyboardButton(text="❌ Отменить", callback_data="order_cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def order_deadline_keyboard_v2() -> InlineKeyboardMarkup:
+    base = deadline_options_keyboard("order_deadline_pick", "order_cancel").inline_keyboard[:-1]
+    base.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="order_back_budget"), InlineKeyboardButton(text="❌ Отменить", callback_data="order_cancel")])
+    base.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")])
+    return InlineKeyboardMarkup(inline_keyboard=base)
+
+
+def order_title_prompt(category: str) -> str:
+    examples = ORDER_EXAMPLES.get(category, ["Нужна помощь с задачей", "Нужна цифровая услуга", "Нужен исполнитель"])
+    examples_text = "\n".join(f"• <code>{html.escape(example)}</code>" for example in examples)
+    return f"""
+━━━━━━━━━━━━━━
+🧾 <b>Создание заказа</b>
+━━━━━━━━━━━━━━
+
+<b>Шаг 2 из 5 — название</b>
+
+📂 Категория: <b>{html.escape(category)}</b>
+
+Напишите коротко, что нужно сделать.
+
+<b>Примеры:</b>
+{examples_text}
+"""
+
+
+def order_budget_prompt(title: str) -> str:
+    return f"""
+━━━━━━━━━━━━━━
+💰 <b>Бюджет заказа</b>
+━━━━━━━━━━━━━━
+
+<b>Шаг 3 из 5</b>
+
+📌 Заказ: <b>{html.escape(title)}</b>
+
+Введите бюджет числом в рублях.
+
+Диапазон: <b>{MIN_ORDER_BUDGET}₽ — {MAX_ORDER_BUDGET}₽</b>
+Пример: <code>1500</code>
+"""
+
+
 @dp.callback_query(F.data == "create_order")
 async def create_order(call: CallbackQuery, state: FSMContext):
+    policy = protect_policy_for_user(call.from_user.id)
+    if policy.get("block_create_order"):
+        register_security_event(call.from_user.id, "order_create_blocked_high_risk", "create_order", status="blocked")
+        await show_screen(
+            call,
+            protect_block_text(call.from_user.id, "создание заказа"),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⚖️ Подать апелляцию", callback_data="protect_appeal_start")],
+                [InlineKeyboardButton(text="🆘 Поддержка", callback_data="support"), InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+            ]),
+            parse_mode="HTML",
+        )
+        await notify_admins(f"""
+🔴 <b>LTeam Protect: создание заказа заблокировано</b>
+
+Пользователь: <code>{call.from_user.id}</code>
+Риск: <b>{policy.get('badge')}</b> / <b>{policy.get('score')}/100</b>
+""")
+        await call.answer("Действие заблокировано LTeam Protect", show_alert=True)
+        return
+
+    # Реквизиты нужны исполнителю только при выводе средств,
+    # заказчик не должен заполнять их при создании заказа.
+
     await state.clear()
     await state.set_state(CreateOrder.category)
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=cat, callback_data=f"order_cat:{cat}")]
-            for cat in CATEGORIES
-        ] + [[InlineKeyboardButton(text="❌ Отмена", callback_data="order_cancel")]]
-    )
 
     await show_screen(call,
         """
 ━━━━━━━━━━━━━━
-📌 <b>Создание заказа</b>
+🧾 <b>Создание заказа</b>
 ━━━━━━━━━━━━━━
 
-Создайте задание, на которое смогут откликнуться исполнители.
+Здесь заказчик публикует задачу, а исполнители откликаются.
 
-<b>Шаг 1 из 5</b>
-Выберите категорию:
+<b>Шаг 1 из 5 — категория</b>
+
+Выберите направление, чтобы заказ попал к нужным исполнителям.
 """,
-        reply_markup=keyboard,
+        reply_markup=order_category_keyboard(),
         parse_mode="HTML"
     )
     await call.answer()
@@ -5089,24 +9207,30 @@ async def order_category(call: CallbackQuery, state: FSMContext):
     await state.update_data(category=category)
     await state.set_state(CreateOrder.title)
 
-    examples = ORDER_EXAMPLES.get(category, ["Нужна помощь с задачей", "Нужна цифровая услуга", "Нужен исполнитель"])
-    examples_text = "\n".join(f"<code>{html.escape(example)}</code>" for example in examples)
+    await show_screen(
+        call,
+        order_title_prompt(category),
+        reply_markup=order_nav_keyboard("order_back_category"),
+        parse_mode="HTML"
+    )
+    await call.answer()
 
-    await show_screen(call,
-        f"""
+
+@dp.callback_query(F.data == "order_back_category")
+async def order_back_category(call: CallbackQuery, state: FSMContext):
+    await state.set_state(CreateOrder.category)
+    await show_screen(
+        call,
+        """
 ━━━━━━━━━━━━━━
-📌 <b>Название заказа</b>
+🧾 <b>Создание заказа</b>
 ━━━━━━━━━━━━━━
 
-📂 Категория: <b>{html.escape(category)}</b>
+<b>Шаг 1 из 5 — категория</b>
 
-<b>Шаг 2 из 5</b>
-Напишите коротко, что вам нужно.
-
-Примеры под эту категорию:
-{examples_text}
+Выберите категорию заказа.
 """,
-        reply_markup=order_cancel_keyboard(),
+        reply_markup=order_category_keyboard(),
         parse_mode="HTML"
     )
     await call.answer()
@@ -5128,21 +9252,26 @@ async def order_title(message: Message, state: FSMContext):
     await state.update_data(title=title)
     await state.set_state(CreateOrder.budget)
 
-    await screen_answer(message,
-        f"""
-━━━━━━━━━━━━━━
-💰 <b>Бюджет</b>
-━━━━━━━━━━━━━━
-
-<b>Шаг 3 из 5</b>
-Введите бюджет в рублях.
-
-Лимит: от <b>{MIN_ORDER_BUDGET}₽</b> до <b>{MAX_ORDER_BUDGET}₽</b>.
-Пример: <code>1500</code>
-""",
-        reply_markup=order_cancel_keyboard(),
+    await screen_answer(
+        message,
+        order_budget_prompt(title),
+        reply_markup=order_nav_keyboard("order_back_title"),
         parse_mode="HTML"
     )
+
+
+@dp.callback_query(F.data == "order_back_title")
+async def order_back_title(call: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    category = data.get("category", "")
+    await state.set_state(CreateOrder.title)
+    await show_screen(
+        call,
+        order_title_prompt(category),
+        reply_markup=order_nav_keyboard("order_back_category"),
+        parse_mode="HTML"
+    )
+    await call.answer()
 
 
 @dp.message(CreateOrder.budget)
@@ -5169,9 +9298,42 @@ async def order_budget(message: Message, state: FSMContext):
 <b>Шаг 4 из 5</b>
 Выберите желаемый срок выполнения.
 """,
-        reply_markup=order_deadline_keyboard(),
+        reply_markup=order_deadline_keyboard_v2(),
         parse_mode="HTML"
     )
+
+
+@dp.callback_query(F.data == "order_back_budget")
+async def order_back_budget(call: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    await state.set_state(CreateOrder.budget)
+    await show_screen(
+        call,
+        order_budget_prompt(data.get("title", "")),
+        reply_markup=order_nav_keyboard("order_back_title"),
+        parse_mode="HTML"
+    )
+    await call.answer()
+
+
+@dp.callback_query(F.data == "order_back_deadline")
+async def order_back_deadline(call: CallbackQuery, state: FSMContext):
+    await state.set_state(CreateOrder.deadline)
+    await show_screen(
+        call,
+        """
+━━━━━━━━━━━━━━
+⏳ <b>Срок выполнения</b>
+━━━━━━━━━━━━━━
+
+<b>Шаг 4 из 5</b>
+
+Выберите желаемый срок выполнения.
+""",
+        reply_markup=order_deadline_keyboard_v2(),
+        parse_mode="HTML"
+    )
+    await call.answer()
 
 
 @dp.callback_query(F.data.startswith("order_deadline_pick:"))
@@ -5183,18 +9345,22 @@ async def order_deadline_pick(call: CallbackQuery, state: FSMContext):
     await show_screen(call,
         f"""
 ━━━━━━━━━━━━━━
-🧾 <b>Описание заказа</b>
+📝 <b>Описание заказа</b>
 ━━━━━━━━━━━━━━
+
+<b>Шаг 5 из 5</b>
 
 ⏳ Срок: <b>{html.escape(deadline)}</b>
 
-<b>Шаг 5 из 5</b>
-Опишите задачу подробнее:
+Опишите задачу подробно:
 • что нужно сделать
 • какие функции нужны
-• примеры/пожелания
+• какой результат ожидаете
+• примеры или пожелания
+
+Чем подробнее описание, тем лучше будут отклики.
 """,
-        reply_markup=order_cancel_keyboard(),
+        reply_markup=order_nav_keyboard("order_back_deadline"),
         parse_mode="HTML"
     )
     await call.answer()
@@ -5205,7 +9371,7 @@ async def order_deadline(message: Message, state: FSMContext):
     await screen_answer(
         message,
         "⏳ Срок нужно выбрать кнопкой ниже, а не писать текстом.",
-        reply_markup=order_deadline_keyboard(),
+        reply_markup=order_deadline_keyboard_v2(),
         parse_mode="HTML"
     )
 
@@ -5260,14 +9426,31 @@ def build_order_preview(data: dict):
 """
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Отправить на модерацию", callback_data="order_publish")],
-        [InlineKeyboardButton(text="✏️ Создать заново", callback_data="create_order")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="order_cancel")],
+        [InlineKeyboardButton(text="✏️ Изменить описание", callback_data="order_back_deadline")],
+        [InlineKeyboardButton(text="🔄 Создать заново", callback_data="create_order")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"), InlineKeyboardButton(text="❌ Отменить", callback_data="order_cancel")],
     ])
     return text, keyboard
 
 
 @dp.callback_query(F.data == "order_publish")
 async def order_publish(call: CallbackQuery, state: FSMContext):
+    policy = protect_policy_for_user(call.from_user.id)
+    if policy.get("block_create_order"):
+        register_security_event(call.from_user.id, "order_publish_blocked_high_risk", "order_publish", status="blocked")
+        await state.clear()
+        await show_screen(
+            call,
+            protect_block_text(call.from_user.id, "публикация заказа"),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⚖️ Подать апелляцию", callback_data="protect_appeal_start")],
+                [InlineKeyboardButton(text="🆘 Поддержка", callback_data="support"), InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+            ]),
+            parse_mode="HTML",
+        )
+        await call.answer("Публикация заблокирована LTeam Protect", show_alert=True)
+        return
+
     data = await state.get_data()
     required = ["title", "category", "budget", "deadline", "description"]
     if any(k not in data for k in required):
@@ -5320,11 +9503,11 @@ ID: <code>{order_id}</code>
 ⏳ Срок: <b>{html.escape(data['deadline'])}</b>
 
 После одобрения админом заказ появится в списке заказов.
-""",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+""" + channel_promo_text("order_sent"),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=add_channel_button([
             [InlineKeyboardButton(text="📋 Смотреть заказы", callback_data="orders_list")],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
-        ]),
+        ], "📢 Канал LTeam")),
         parse_mode="HTML"
     )
     await call.answer()
@@ -5345,7 +9528,25 @@ async def admin_approve_listing(call: CallbackQuery):
         conn.execute("UPDATE listings SET status='active' WHERE id=?", (listing_id,))
         conn.commit()
     try:
-        await bot.send_message(seller_id, f"✅ Ваше объявление <b>{html.escape(title or '')}</b> прошло модерацию и опубликовано.", parse_mode="HTML")
+        await bot.send_message(
+            seller_id,
+            f"""
+━━━━━━━━━━━━━━
+✅ <b>Объявление опубликовано</b>
+━━━━━━━━━━━━━━
+
+Ваше объявление прошло модерацию и теперь видно в каталоге.
+
+📦 Объявление: <b>#{listing_id}</b>
+🧾 Название: <b>{html.escape(title or 'Без названия')}</b>
+""",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=add_channel_button([
+                [InlineKeyboardButton(text="👀 Перейти к объявлению", callback_data=f"view_listing:{listing_id}")],
+                [InlineKeyboardButton(text="🔎 Каталог услуг", callback_data="market")],
+                [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+            ], "📢 Канал LTeam")),
+            parse_mode="HTML"
+        )
     except Exception:
         pass
     await call.answer("Объявление одобрено", show_alert=True)
@@ -5387,7 +9588,27 @@ async def admin_approve_order(call: CallbackQuery):
         conn.execute("UPDATE orders SET status='active' WHERE id=?", (order_id,))
         conn.commit()
     try:
-        await bot.send_message(customer_id, f"✅ Ваш заказ <b>{html.escape(title or '')}</b> прошёл модерацию и опубликован.", parse_mode="HTML")
+        await bot.send_message(
+            customer_id,
+            f"""
+━━━━━━━━━━━━━━
+✅ <b>Заказ опубликован</b>
+━━━━━━━━━━━━━━
+
+Ваш заказ успешно прошёл модерацию и теперь доступен исполнителям.
+
+📌 Заказ: <b>#{order_id}</b>
+🧾 Название: <b>{html.escape(title or 'Без названия')}</b>
+
+Теперь исполнители смогут откликаться на ваш заказ.
+""",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=add_channel_button([
+                [InlineKeyboardButton(text="👀 Перейти к заказу", callback_data=f"view_order:{order_id}")],
+                [InlineKeyboardButton(text="📌 Лента заказов", callback_data="orders_list")],
+                [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+            ], "📢 Канал LTeam")),
+            parse_mode="HTML"
+        )
     except Exception:
         pass
     await call.answer("Заказ одобрен", show_alert=True)
@@ -5534,6 +9755,31 @@ async def order_apply_start(call: CallbackQuery, state: FSMContext):
     order_id = int(call.data.split(":")[1])
     executor_id = call.from_user.id
 
+    policy = protect_policy_for_user(executor_id)
+    if policy.get("block_order_application"):
+        register_security_event(executor_id, "order_application_blocked_high_risk", f"order #{order_id}", status="blocked")
+        await show_screen(
+            call,
+            protect_block_text(executor_id, "отклик на заказ"),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")],
+                [InlineKeyboardButton(text="📌 Назад к заказу", callback_data=f"view_order:{order_id}")],
+            ]),
+            parse_mode="HTML",
+        )
+        await notify_admins(f"""
+🔴 <b>LTeam Protect: отклик на заказ заблокирован</b>
+
+Пользователь: <code>{executor_id}</code>
+Заказ: <code>#{order_id}</code>
+Риск: <b>{policy.get('badge')}</b> / <b>{policy.get('score')}/100</b>
+""")
+        await call.answer("Отклик заблокирован LTeam Protect", show_alert=True)
+        return
+
+    # Реквизиты исполнителя больше не требуются на этапе отклика.
+    # Они понадобятся только при выводе средств после завершения сделки.
+
     with db() as conn:
         row = conn.execute(
             "SELECT customer_id, title, budget FROM orders WHERE id=? AND status='active'",
@@ -5678,18 +9924,32 @@ async def order_apply_finish(message: Message, state: FSMContext):
             await screen_answer(message, "❌ Заказ уже недоступен.", reply_markup=back_home())
             return
 
+        # Исполнитель укажет реквизиты только при выводе средств.
+        # На этапе отклика мы не требуем карту/кошелёк, чтобы не ломать воронку.
+        executor_card_mask = "не указан — будет запрошен при выводе"
+        executor_ton_mask = ""
+
         conn.execute(
             """
-            INSERT INTO order_applications (order_id, executor_id, customer_id, price, deadline, comment, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO order_applications (
+                order_id, executor_id, customer_id, price, deadline, comment,
+                status, created_at, updated_at, executor_card_mask, executor_ton_mask
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(order_id, executor_id) DO UPDATE SET
                 price=excluded.price,
                 deadline=excluded.deadline,
                 comment=excluded.comment,
                 status='new',
-                updated_at=excluded.updated_at
+                updated_at=excluded.updated_at,
+                executor_card_mask=excluded.executor_card_mask,
+                executor_ton_mask=excluded.executor_ton_mask
             """,
-            (order_id, executor_id, customer_id, price, deadline, comment, "new", datetime.now().isoformat(), datetime.now().isoformat())
+            (
+                order_id, executor_id, customer_id, price, deadline, comment,
+                "new", datetime.now().isoformat(), datetime.now().isoformat(),
+                executor_card_mask, executor_ton_mask,
+            )
         )
         conn.commit()
 
@@ -5867,26 +10127,51 @@ async def reject_app(call: CallbackQuery):
     user_id = call.from_user.id
 
     with db() as conn:
-        app = conn.execute("SELECT order_id, executor_id, customer_id, status FROM order_applications WHERE id=?", (app_id,)).fetchone()
+        conn.execute("BEGIN IMMEDIATE")
+        app = conn.execute(
+            "SELECT order_id, executor_id, customer_id, status FROM order_applications WHERE id=?",
+            (app_id,),
+        ).fetchone()
         if not app:
             await call.answer("Отклик не найден", show_alert=True)
             return
+
         order_id, executor_id, customer_id, status = app
         if user_id != customer_id and not is_admin(user_id):
             await call.answer("Нет доступа", show_alert=True)
             return
-        conn.execute("UPDATE order_applications SET status='rejected', updated_at=? WHERE id=?", (datetime.now().isoformat(), app_id))
+
+        if status != "new":
+            if status == "accepted":
+                await call.answer("Принятый отклик нельзя отклонить.", show_alert=True)
+            elif status == "rejected":
+                await call.answer("Этот отклик уже отклонён.", show_alert=True)
+            else:
+                await call.answer("Статус отклика уже изменён.", show_alert=True)
+            return
+
+        updated = conn.execute(
+            "UPDATE order_applications SET status='rejected', updated_at=? WHERE id=? AND status='new'",
+            (datetime.now().isoformat(), app_id),
+        ).rowcount
+        if updated != 1:
+            await call.answer("Отклик уже был обработан.", show_alert=True)
+            return
         conn.commit()
 
     try:
         await bot.send_message(executor_id, f"❌ Ваш отклик на заказ #{order_id} отклонён.")
     except Exception:
         pass
-    await show_screen(call, "✅ Отклик отклонён.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⬅️ Все отклики", callback_data=f"order_apps:{order_id}")]
-    ]))
-    await call.answer()
 
+    await show_screen(
+        call,
+        "✅ Отклик отклонён.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Все отклики", callback_data=f"order_apps:{order_id}")]
+        ]),
+    )
+    await call.answer()
 
 @dp.callback_query(F.data.startswith("accept_app:"))
 async def accept_app(call: CallbackQuery):
@@ -5894,9 +10179,20 @@ async def accept_app(call: CallbackQuery):
     user_id = call.from_user.id
 
     with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         app = conn.execute(
             """
-            SELECT a.order_id, a.executor_id, a.customer_id, a.price, o.title
+            SELECT
+                a.order_id,
+                a.executor_id,
+                a.customer_id,
+                a.price,
+                COALESCE(a.deadline,''),
+                COALESCE(a.comment,''),
+                COALESCE(a.status,'new'),
+                o.title,
+                COALESCE(o.status,''),
+                COALESCE(o.executor_id, 0)
             FROM order_applications a
             JOIN orders o ON o.id=a.order_id
             WHERE a.id=?
@@ -5906,56 +10202,133 @@ async def accept_app(call: CallbackQuery):
         if not app:
             await call.answer("Отклик не найден", show_alert=True)
             return
-        order_id, executor_id, customer_id, price, title = app
+
+        order_id, executor_id, customer_id, price, deadline, comment, app_status, title, order_status, selected_executor_id = app
         if user_id != customer_id and not is_admin(user_id):
             await call.answer("Нет доступа", show_alert=True)
             return
 
-        conn.execute("UPDATE order_applications SET status='accepted', updated_at=? WHERE id=?", (datetime.now().isoformat(), app_id))
-        conn.execute("UPDATE order_applications SET status='rejected', updated_at=? WHERE order_id=? AND id<>? AND status='new'", (datetime.now().isoformat(), order_id, app_id))
-        conn.execute("UPDATE orders SET executor_id=?, status='in_work' WHERE id=?", (executor_id, order_id))
+        if app_status != "new":
+            if app_status == "accepted":
+                await call.answer("Этот отклик уже принят.", show_alert=True)
+            elif app_status == "rejected":
+                await call.answer("Отклик уже отклонён.", show_alert=True)
+            else:
+                await call.answer("Отклик уже обработан.", show_alert=True)
+            return
 
-        commission = int(price * COMMISSION_PERCENT / 100)
-        payout = price - commission
-        cur = conn.cursor()
-        cur.execute(
-            """
-            INSERT INTO deals (listing_id, buyer_id, seller_id, amount, commission, payout, payment_method, status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (0, customer_id, executor_id, price, commission, payout, "order", "waiting_payment", datetime.now().isoformat())
+        if order_status != "active" or int(selected_executor_id or 0) != 0:
+            await call.answer("Исполнитель по этому заказу уже выбран или заказ больше не активен.", show_alert=True)
+            return
+
+        commission = int(int(price or 0) * COMMISSION_PERCENT / 100)
+        payout = int(price or 0) - commission
+        now = datetime.now().isoformat()
+
+        accepted = conn.execute(
+            "UPDATE order_applications SET status='accepted', updated_at=? WHERE id=? AND status='new'",
+            (now, app_id),
+        ).rowcount
+        if accepted != 1:
+            await call.answer("Отклик уже был обработан.", show_alert=True)
+            return
+
+        conn.execute(
+            "UPDATE order_applications SET status='rejected', updated_at=? WHERE order_id=? AND id<>? AND status='new'",
+            (now, order_id, app_id),
         )
-        deal_id = cur.lastrowid
+
+        # После принятия отклика стороны переходят в безопасное обсуждение.
+        order_updated = conn.execute(
+            "UPDATE orders SET executor_id=?, status='discussion' WHERE id=? AND status='active' AND COALESCE(executor_id,0)=0",
+            (executor_id, order_id),
+        ).rowcount
+        if order_updated != 1:
+            # Заказ изменился параллельно — отменяем всю транзакцию целиком.
+            conn.rollback()
+            await call.answer("Исполнитель уже выбран. Обновите список откликов.", show_alert=True)
+            return
+
+        existing = conn.execute(
+            """
+            SELECT id FROM deals
+            WHERE order_id=? AND buyer_id=? AND seller_id=?
+              AND status IN ('discussion','waiting_final_price','waiting_buyer_price_confirm','waiting_admin_payment_approval','waiting_payment','waiting_receipt','waiting_admin_confirm','in_work')
+            """,
+            (order_id, customer_id, executor_id),
+        ).fetchone()
+
+        if existing:
+            deal_id = int(existing[0])
+            conn.execute(
+                """
+                UPDATE deals
+                SET amount=?, commission=?, payout=?, payment_method='admin_card_only', status='discussion', source_type='order'
+                WHERE id=?
+                """,
+                (price, commission, payout, deal_id),
+            )
+        else:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO deals (
+                    listing_id, order_id, buyer_id, seller_id, amount, commission, payout,
+                    payment_method, status, source_type, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (0, order_id, customer_id, executor_id, price, commission, payout, "admin_card_only", "discussion", "order", now),
+            )
+            deal_id = int(cur.lastrowid)
+
         conn.commit()
 
-    for target, text in [
-        (executor_id, f"🎉 Ваш отклик на заказ #{order_id} принят! Создана сделка #{deal_id}."),
-        (customer_id, f"✅ Вы приняли отклик. Создана сделка #{deal_id}. Оплатите через гаранта LTeam."),
-    ]:
-        try:
-            await bot.send_message(target, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="💬 Чат заказа", callback_data=f"order_chat:{order_id}:{executor_id if target == customer_id else customer_id}")],
-                [InlineKeyboardButton(text="💬 Мои сделки", callback_data="my_deals")],
-            ]))
-        except Exception:
-            pass
+    log_admin_action(
+        user_id,
+        "order_application_accepted_discussion_started",
+        executor_id,
+        f"order_id={order_id}; app_id={app_id}; deal_id={deal_id}; price={price}; commission={commission}; payout={payout}",
+    )
 
-    await notify_admins(f"""
-✅ <b>Отклик принят</b>
+    buyer_text = f"""
+━━━━━━━━━━━━━━
+✅ <b>Исполнитель выбран</b>
+━━━━━━━━━━━━━━
 
-Заказ: <code>#{order_id}</code>
-Сделка: <code>#{deal_id}</code>
-Заказчик: <code>{customer_id}</code>
+Заказ: <b>{html.escape(title or 'Без названия')}</b>
 Исполнитель: <code>{executor_id}</code>
-Сумма: <b>{price}₽</b>
-""")
+Отклик: <b>#{app_id}</b>
 
-    await show_screen(call, f"✅ Исполнитель выбран. Создана сделка <b>#{deal_id}</b>.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+💰 Предварительная цена: <b>{int(price or 0)}₽</b>
+💬 Теперь можно безопасно обсудить детали внутри LTeam.
+После обсуждения исполнитель предложит итоговую цену сделки.
+"""
+
+    seller_text = f"""
+━━━━━━━━━━━━━━
+🎉 <b>Ваш отклик принят</b>
+━━━━━━━━━━━━━━
+
+Заказ: <b>{html.escape(title or 'Без названия')}</b>
+Заказчик: <code>{customer_id}</code>
+
+💬 Обсудите детали в безопасном чате LTeam.
+После согласования сможете отправить итоговую цену сделки.
+"""
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💬 Чат заказа", callback_data=f"order_chat:{order_id}:{executor_id}")],
-        [InlineKeyboardButton(text="💬 Мои сделки", callback_data="my_deals")],
-    ]), parse_mode="HTML")
-    await call.answer()
+        [InlineKeyboardButton(text="🤝 Открыть сделку", callback_data=f"deal:{deal_id}")],
+        [InlineKeyboardButton(text="⬅️ К заказу", callback_data=f"view_order:{order_id}")],
+    ])
 
+    await show_screen(call, buyer_text, reply_markup=keyboard, parse_mode="HTML")
+    try:
+        await bot.send_message(executor_id, seller_text, reply_markup=keyboard, parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer("Исполнитель выбран")
 
 @dp.callback_query(F.data.startswith("order_chat:"))
 async def order_chat_start(call: CallbackQuery, state: FSMContext):
@@ -5998,7 +10371,20 @@ async def order_chat_start(call: CallbackQuery, state: FSMContext):
         await call.answer("Нельзя писать самому себе", show_alert=True)
         return
 
-    await state.update_data(order_id=order_id, receiver_id=receiver_id, order_budget=budget)
+    deal_id = 0
+    with db() as conn:
+        deal_row = conn.execute(
+            """
+            SELECT id FROM deals
+            WHERE order_id=? AND ((buyer_id=? AND seller_id=?) OR (buyer_id=? AND seller_id=?))
+            ORDER BY id DESC LIMIT 1
+            """,
+            (order_id, sender_id, receiver_id, receiver_id, sender_id),
+        ).fetchone()
+        if deal_row:
+            deal_id = int(deal_row[0])
+
+    await state.update_data(order_id=order_id, receiver_id=receiver_id, order_budget=budget, deal_id=deal_id)
     await state.set_state(OrderChatState.text)
 
     history_rows = get_order_chat_history(order_id, limit=8)
@@ -6025,10 +10411,14 @@ async def order_chat_start(call: CallbackQuery, state: FSMContext):
 
 Напишите сообщение одним текстом.
 """,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Открыть заказ", callback_data=f"view_order:{order_id}")],
-            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
-        ]),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=(
+            ([[InlineKeyboardButton(text="📦 Открыть сделку", callback_data=f"deal:{deal_id}")]] if deal_id else []) +
+            [
+                [InlineKeyboardButton(text="🔄 Обновить чат", callback_data=f"order_chat:{order_id}:{receiver_id}")],
+                [InlineKeyboardButton(text="⬅️ Открыть заказ", callback_data=f"view_order:{order_id}")],
+                [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+            ]
+        )),
         parse_mode="HTML",
     )
     await call.answer()
@@ -6057,6 +10447,8 @@ async def order_chat_send(message: Message, state: FSMContext):
 
     ok, reason = order_chat_moderation(text, budget)
     if not ok:
+        if looks_like_bypass_attempt(text):
+            await apply_bypass_punishment(message.from_user.id, f"order #{order_id}", text)
         await notify_admins(f"""
 🛡 <b>LTeam Protect заблокировал сообщение</b>
 
@@ -6077,6 +10469,21 @@ async def order_chat_send(message: Message, state: FSMContext):
             parse_mode="HTML",
         )
         return
+
+    protect_ok, protect_reason = await protect_check_outgoing_message(message.from_user.id, text, f"order #{order_id}")
+    if not protect_ok:
+        await screen_answer(
+            message,
+            html.escape(protect_reason),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💬 Написать заново", callback_data=f"order_chat:{order_id}:{receiver_id}")],
+                [InlineKeyboardButton(text="📌 Открыть заказ", callback_data=f"view_order:{order_id}")],
+            ]),
+            parse_mode="HTML",
+        )
+        return
+
+    await protect_notify_partner_if_needed(message.from_user.id, receiver_id, f"order #{order_id}")
 
     with db() as conn:
         conn.execute(
@@ -6172,55 +10579,128 @@ async def admin_find_user(call: CallbackQuery, state: FSMContext):
     if not is_admin(call.from_user.id):
         await call.answer("Нет доступа", show_alert=True)
         return
-    await state.set_state(AdminSearchUserState.user_id)
-    await show_screen(call, "👥 Введите Telegram ID пользователя:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")]
-    ]))
+    await ask_admin_user_query(call, state, "profile", "🔎 <b>Поиск пользователя</b>", "admin_panel")
     await call.answer()
 
 @dp.message(AdminSearchUserState.user_id)
 async def admin_find_user_result(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         await state.clear(); return
-    value = (message.text or "").strip()
-    if not value.isdigit():
-        await screen_answer(message, "Введите только числовой ID."); return
+    rows = find_users_for_admin(message.text or "")
     await state.clear()
-    await screen_answer(message, "Откройте профиль пользователя:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"👤 Пользователь {value}", callback_data=f"admin_user:{value}")],
-        [InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")],
-    ]))
+    if not rows:
+        await screen_answer(message, "❌ Пользователь не найден. Введите ID, @username или ник.", parse_mode="HTML")
+        return
+    if len(rows) == 1:
+        user_id = int(rows[0][0])
+        await screen_answer(message, "Откройте профиль пользователя:", reply_markup=user_action_after_pick_keyboard("profile", user_id), parse_mode="HTML")
+        return
+    await screen_answer(message, "Найдено несколько пользователей:", reply_markup=user_pick_keyboard(rows, "profile"), parse_mode="HTML")
 
 @dp.callback_query(F.data == "admin_reports")
 async def admin_reports(call: CallbackQuery):
     if not is_staff(call.from_user.id):
-        await call.answer("Нет доступа", show_alert=True); return
+        await call.answer("Нет доступа", show_alert=True)
+        return
+
+    ensure_admin_tables()
+    if is_owner(call.from_user.id):
+        where_sql = "COALESCE(status, 'new')='new'"
+    else:
+        # Жалобы на админов видят только владельцы.
+        where_sql = "COALESCE(status, 'new')='new' AND COALESCE(target_type, 'listing')!='admin'"
+
     with db() as conn:
-        rows = conn.execute("""
-        SELECT id, user_id, COALESCE(target_type, 'listing'), COALESCE(target_id, listing_id), reason
-        FROM reports
-        WHERE COALESCE(status, 'new')='new'
-        ORDER BY id DESC LIMIT 10
+        rows = conn.execute(f"""
+            SELECT id, user_id, COALESCE(target_type, 'listing'), COALESCE(target_id, listing_id), reason
+            FROM reports
+            WHERE {where_sql}
+            ORDER BY id DESC
+            LIMIT 10
         """).fetchall()
+
     if not rows:
-        await show_screen(call, "🚨 Новых жалоб нет.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")]]))
-        await call.answer(); return
+        await show_screen(
+            call,
+            "🚨 Новых жалоб нет.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")]
+            ]),
+        )
+        await call.answer()
+        return
+
     text = "━━━━━━━━━━━━━━\n🚨 <b>Новые жалобы</b>\n━━━━━━━━━━━━━━\n\n"
-    buttons=[]
-    for rid, uid, target_type, target_id, reason in rows:
-        text += f"<b>#{rid}</b> • {html.escape(target_type or '—')} <code>{target_id}</code>\n👤 <code>{uid}</code>\n{html.escape((reason or '')[:120])}\n\n"
-        buttons.append([InlineKeyboardButton(text=f"✅ Закрыть жалобу #{rid}", callback_data=f"admin_close_report:{rid}")])
+    buttons = []
+
+    for report_id, reporter_id, target_type, target_id, reason in rows:
+        is_admin_report = target_type == "admin"
+        marker = "👑 Жалоба на админа" if is_admin_report else "🚨 Жалоба"
+        text += f"""
+<b>#{report_id}</b> • {marker}
+Тип: <b>{html.escape(target_type or '—')}</b>
+Цель: <code>{target_id}</code>
+От: <code>{reporter_id}</code>
+Причина: {html.escape((reason or '')[:240])}
+
+"""
+
+        if is_admin_report:
+            if is_owner(call.from_user.id):
+                buttons.append([
+                    InlineKeyboardButton(text=f"✅ Закрыть #{report_id}", callback_data=f"admin_close_report:{report_id}"),
+                    InlineKeyboardButton(text=f"👤 Админ {target_id}", callback_data=f"admin_user:{target_id}"),
+                ])
+        else:
+            buttons.append([
+                InlineKeyboardButton(text=f"✅ Закрыть #{report_id}", callback_data=f"admin_close_report:{report_id}")
+            ])
+
     buttons.append([InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")])
     await show_screen(call, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
     await call.answer()
 
+
 @dp.callback_query(F.data.startswith("admin_close_report:"))
 async def admin_close_report(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
-        await call.answer("Нет доступа", show_alert=True); return
+    if not is_staff(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+
+    ensure_admin_tables()
     report_id = int(call.data.split(":")[1])
+
     with db() as conn:
-        conn.execute("UPDATE reports SET status='closed' WHERE id=?", (report_id,)); conn.commit()
+        row = conn.execute(
+            """
+            SELECT COALESCE(target_type, 'listing'), COALESCE(target_id, listing_id)
+            FROM reports
+            WHERE id=?
+            """,
+            (report_id,),
+        ).fetchone()
+
+    if not row:
+        await call.answer("Жалоба не найдена", show_alert=True)
+        return
+
+    target_type, target_id = row
+
+    if target_type == "admin":
+        ok, reason = can_act(call.from_user.id, target_id, "close_admin_report")
+    else:
+        ok, reason = can_act(call.from_user.id, target_id, "view_reports")
+
+    if not ok:
+        await call.answer(reason, show_alert=True)
+        return
+
+    with db() as conn:
+        conn.execute("UPDATE reports SET status='closed' WHERE id=?", (report_id,))
+        conn.commit()
+
+    log_admin_action(call.from_user.id, "close_report", target_id, f"report_id={report_id}; target_type={target_type}")
+
     await call.answer("Жалоба закрыта", show_alert=True)
     call.data = "admin_reports"
     await admin_reports(call)
@@ -6367,10 +10847,16 @@ async def admin_user_warnings(call: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("admin_warn_user:"))
 async def admin_warn_user_start(call: CallbackQuery, state: FSMContext):
-    if not is_admin(call.from_user.id):
+    if not is_staff(call.from_user.id):
         await call.answer("Нет доступа", show_alert=True)
         return
+
     user_id = int(call.data.split(":")[1])
+    ok, reason = can_act(call.from_user.id, user_id, "warn")
+    if not ok:
+        await call.answer(reason, show_alert=True)
+        return
+
     await state.update_data(admin_target_user_id=user_id)
     await state.set_state(AdminWarnState.reason)
     await show_screen(call, f"⚠️ Введите причину предупреждения для пользователя <code>{user_id}</code>.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Профиль пользователя", callback_data=f"admin_user:{user_id}")]]), parse_mode="HTML")
@@ -6378,20 +10864,38 @@ async def admin_warn_user_start(call: CallbackQuery, state: FSMContext):
 
 @dp.message(AdminWarnState.reason)
 async def admin_warn_user_finish(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
-        await state.clear(); return
+    if not is_staff(message.from_user.id):
+        await state.clear()
+        return
+
     data = await state.get_data()
     user_id = int(data.get("admin_target_user_id") or 0)
     reason = (message.text or "").strip()
+
     if not user_id or len(reason) < 3:
-        await screen_answer(message, "Причина слишком короткая."); return
+        await screen_answer(message, "Причина слишком короткая.")
+        return
+
+    ok, reason_text = can_act(message.from_user.id, user_id, "warn")
+    if not ok:
+        await state.clear()
+        await screen_answer(message, f"❌ {html.escape(reason_text)}")
+        return
+
     with db() as conn:
-        conn.execute("INSERT INTO admin_warnings (user_id, admin_id, reason, created_at) VALUES (?, ?, ?, ?)", (user_id, message.from_user.id, reason, datetime.now().isoformat()))
+        conn.execute(
+            "INSERT INTO admin_warnings (user_id, admin_id, reason, created_at) VALUES (?, ?, ?, ?)",
+            (user_id, message.from_user.id, reason, datetime.now().isoformat())
+        )
         conn.commit()
+
+    log_admin_action(message.from_user.id, "warn_user", user_id, reason)
+
     try:
         await bot.send_message(user_id, f"⚠️ <b>Предупреждение LTeam</b>\n\n{html.escape(reason)}", parse_mode="HTML")
     except Exception:
         pass
+
     await state.clear()
     await screen_answer(message, f"✅ Предупреждение выдано пользователю <code>{user_id}</code>.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Профиль пользователя", callback_data=f"admin_user:{user_id}")]]), parse_mode="HTML")
     await notify_admins(f"⚠️ <b>Выдано предупреждение</b>\n\nПользователь: <code>{user_id}</code>\nАдмин: <code>{message.from_user.id}</code>\nПричина:\n{html.escape(reason)}")
@@ -6502,6 +11006,7 @@ async def admin_order_chat(call: CallbackQuery):
 """,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📌 Открыть заказ", callback_data=f"view_order:{order_id}")],
+            [InlineKeyboardButton(text="💬 Центр чатов", callback_data="admin_chat_hint")],
             [InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")],
         ]),
         parse_mode="HTML",
@@ -6534,44 +11039,6 @@ async def admin_order_chat_command(message: Message):
     )
 
 # ===== АДМИНКА 3/4: ФИНАНСЫ, СДЕЛКИ, БЕЗОПАСНОСТЬ, РАССЫЛКИ =====
-
-def ensure_admin_tables():
-    """Дополнительные таблицы для усиленной админки. Безопасно вызывается много раз."""
-    with db() as conn:
-        cur = conn.cursor()
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS admin_warnings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            admin_id INTEGER,
-            text TEXT,
-            created_at TEXT
-        )
-        """)
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS security_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            event_type TEXT,
-            context TEXT,
-            text TEXT,
-            status TEXT DEFAULT 'new',
-            created_at TEXT
-        )
-        """)
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS admin_broadcasts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            admin_id INTEGER,
-            target TEXT,
-            text TEXT,
-            sent_count INTEGER DEFAULT 0,
-            total_count INTEGER DEFAULT 0,
-            created_at TEXT
-        )
-        """)
-        conn.commit()
-
 
 def admin_only(call: CallbackQuery) -> bool:
     return is_admin(call.from_user.id)
@@ -6901,34 +11368,459 @@ async def admin_deal_cancel(call: CallbackQuery):
     await admin_set_deal_status(call, int(call.data.split(":")[1]), "cancelled", "❌ Сделка отменена администрацией LTeam.")
 
 
-@dp.callback_query(F.data == "admin_security_center")
-async def admin_security_center(call: CallbackQuery):
-    if not admin_only(call):
-        await call.answer("Нет доступа", show_alert=True); return
+
+# ===== LTEAM APPEAL UX =====
+
+def get_user_restrictions(user_id: int) -> dict:
+    """Возвращает человекочитаемое состояние ограничений LTeam Protect.
+
+    Функция нужна для UX-экранов Protect и апелляций. Источник истины —
+    protect_policy_for_user(), поэтому ограничения не расходятся с реальной
+    логикой блокировок в чатах, объявлениях, заказах и откликах.
+    """
+    policy = protect_policy_for_user(int(user_id))
+    blocked_actions: list[str] = []
+
+    if policy.get("block_chats"):
+        blocked_actions.append("безопасные чаты")
+    if policy.get("block_create_listing"):
+        blocked_actions.append("создание объявлений")
+    if policy.get("block_create_order"):
+        blocked_actions.append("создание заказов")
+    if policy.get("block_order_application"):
+        blocked_actions.append("отклики на заказы")
+
+    if blocked_actions:
+        reason = "Заблокированы: " + ", ".join(blocked_actions) + ". Подайте апелляцию Protect для ручной проверки."
+        return {
+            "blocked": True,
+            "reason": reason,
+            "actions": blocked_actions,
+            "level": policy.get("level", "high"),
+            "score": int(policy.get("score", 0) or 0),
+        }
+
+    if policy.get("force_moderation"):
+        return {
+            "blocked": False,
+            "reason": "Критичных блокировок нет, но новые действия могут проходить усиленную модерацию.",
+            "actions": [],
+            "level": policy.get("level", "medium"),
+            "score": int(policy.get("score", 0) or 0),
+        }
+
+    return {
+        "blocked": False,
+        "reason": "Критичных ограничений сейчас нет.",
+        "actions": [],
+        "level": policy.get("level", "low"),
+        "score": int(policy.get("score", 0) or 0),
+    }
+
+
+def appeal_intro_text(user_id: int) -> str:
+    risk = get_user_security_score(user_id)
+    restrictions = get_user_restrictions(user_id)
+    status_line = "🔒 Есть ограничения" if restrictions.get("blocked") else "✅ Критичных ограничений нет"
+    return f"""
+━━━━━━━━━━━━━━
+⚖️ <b>Апелляция LTeam Protect</b>
+━━━━━━━━━━━━━━
+
+🛡 <b>Ваш статус</b>
+{risk['badge']} · <b>{risk['score']}/100</b>
+{status_line}
+
+<b>Когда нужна апелляция?</b>
+Если Protect ограничил действие ошибочно, владельцы вручную проверят историю аккаунта, жалобы, предупреждения и события безопасности.
+
+<b>Что написать:</b>
+• какое действие было заблокировано;
+• почему сработал Protect;
+• что вы готовы исправить;
+• почему аккаунту можно доверять.
+
+━━━━━━━━━━━━━━
+✍️ Отправьте объяснение одним сообщением.
+"""
+
+
+@dp.callback_query(F.data == "protect_status")
+async def protect_status(call: CallbackQuery):
+    risk = get_user_security_score(call.from_user.id)
+    restrictions = get_user_restrictions(call.from_user.id)
+    restriction_text = restrictions.get("reason") or "Критичных ограничений сейчас нет."
+    await show_screen(
+        call,
+        f"""
+━━━━━━━━━━━━━━
+🛡 <b>Мой статус LTeam Protect</b>
+━━━━━━━━━━━━━━
+
+Статус: <b>{risk['badge']}</b>
+Score: <b>{risk['score']}/100</b>
+
+<b>Ограничения:</b>
+{html.escape(restriction_text)}
+
+<b>Факторы:</b>
+{security_reasons_text(risk.get('reasons', []), limit=6)}
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⚖️ Апелляция Protect", callback_data="protect_appeal_start")],
+            [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"), InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")],
+        ]),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+# ===== LTEAM PROTECT APPEALS =====
+
+async def notify_owners(text: str, reply_markup=None):
+    owner_ids = OWNER_IDS or ADMIN_IDS[:1]
+    for owner_id in owner_ids:
+        try:
+            await bot.send_message(owner_id, text, reply_markup=reply_markup, parse_mode="HTML")
+        except Exception:
+            pass
+
+
+def pending_appeal_for_user(user_id: int):
     ensure_admin_tables()
     with db() as conn:
+        return conn.execute(
+            """
+            SELECT id, reason, created_at
+            FROM protect_appeals
+            WHERE user_id=? AND status='pending'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+
+
+@dp.message(Command("appeal"))
+async def command_appeal(message: Message, state: FSMContext):
+    save_user(message)
+    await state.set_state(AppealState.reason)
+    risk = get_user_security_score(message.from_user.id)
+    await screen_answer(
+        message,
+        appeal_intro_text(message.from_user.id),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="protect_appeal_cancel")],
+            [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"), InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")],
+        ]),
+        parse_mode="HTML",
+    )
+
+
+@dp.callback_query(F.data == "protect_appeal_start")
+async def protect_appeal_start(call: CallbackQuery, state: FSMContext):
+    existing = pending_appeal_for_user(call.from_user.id)
+    if existing:
+        appeal_id, reason, created_at = existing
+        await show_screen(
+            call,
+            f"""
+━━━━━━━━━━━━━━
+⚖️ <b>Апелляция уже на проверке</b>
+━━━━━━━━━━━━━━
+
+Заявка: <b>#{appeal_id}</b>
+Создана: <code>{html.escape((created_at or '')[:16])}</code>
+
+Причина:
+{html.escape((reason or '')[:800])}
+
+Дождитесь решения владельцев. Новую апелляцию можно будет создать после обработки текущей.
+""",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🛡 Мой статус Protect", callback_data="protect_status")],
+                [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"), InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")],
+            ]),
+            parse_mode="HTML",
+        )
+        await call.answer("Апелляция уже создана", show_alert=True)
+        return
+    risk = get_user_security_score(call.from_user.id)
+    await state.set_state(AppealState.reason)
+    await show_screen(
+        call,
+        appeal_intro_text(call.from_user.id),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="protect_appeal_cancel")],
+            [InlineKeyboardButton(text="🛡 Мой статус", callback_data="protect_status")],
+            [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"), InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")],
+        ]),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@dp.callback_query(F.data == "protect_appeal_cancel")
+async def protect_appeal_cancel(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await show_screen(
+        call,
+        "⚖️ Апелляция отменена. Вернуться к ней можно из профиля или поддержки.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="👤 Профиль", callback_data="profile")],
+            [InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")],
+        ]),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@dp.message(AppealState.reason)
+async def protect_appeal_save(message: Message, state: FSMContext):
+    save_user(message)
+    text = (message.text or "").strip()
+    if len(text) < 20:
+        await screen_answer(message, "Напишите подробнее: минимум 20 символов. Объясните, почему ограничение нужно снять.", parse_mode="HTML")
+        return
+    if len(text) > 1500:
+        await screen_answer(message, "Апелляция слишком длинная. Максимум 1500 символов.", parse_mode="HTML")
+        return
+    existing = pending_appeal_for_user(message.from_user.id)
+    if existing:
+        await state.clear()
+        await screen_answer(
+            message,
+            f"⚖️ У вас уже есть апелляция на проверке: <b>#{existing[0]}</b>.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🛡 Мой статус Protect", callback_data="protect_status")],
+                [InlineKeyboardButton(text="👤 Профиль", callback_data="profile")],
+            ]),
+            parse_mode="HTML",
+        )
+        return
+    ensure_admin_tables()
+    with db() as conn:
+        cur = conn.execute(
+            """INSERT INTO protect_appeals (user_id, reason, status, created_at) VALUES (?, ?, 'pending', ?)""",
+            (message.from_user.id, text, datetime.now().isoformat()),
+        )
+        appeal_id = cur.lastrowid
+        conn.commit()
+    register_security_event(message.from_user.id, "protect_appeal_created", f"appeal #{appeal_id}", text, status="new")
+    log_admin_action(message.from_user.id, "protect_appeal_created", message.from_user.id, f"appeal_id={appeal_id}")
+    risk = get_user_security_score(message.from_user.id)
+    await notify_owners(
+        f"""
+⚖️ <b>Новая апелляция Protect</b>
+
+Заявка: <b>#{appeal_id}</b>
+Пользователь: <code>{message.from_user.id}</code>
+Риск: <b>{risk['badge']}</b> / <b>{risk['score']}/100</b>
+
+Текст:
+{html.escape(text[:1000])}
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Одобрить", callback_data=f"admin_appeal_approve:{appeal_id}"), InlineKeyboardButton(text="❌ Отклонить", callback_data=f"admin_appeal_reject:{appeal_id}")],
+            [InlineKeyboardButton(text="👤 Пользователь", callback_data=f"admin_user:{message.from_user.id}"), InlineKeyboardButton(text="⚖️ Все апелляции", callback_data="admin_protect_appeals")],
+        ]),
+    )
+    await state.clear()
+    await screen_answer(
+        message,
+        f"""
+━━━━━━━━━━━━━━
+✅ <b>Апелляция отправлена</b>
+━━━━━━━━━━━━━━
+
+🧾 Номер заявки: <b>#{appeal_id}</b>
+⏳ Статус: <b>на проверке у владельцев</b>
+
+Владельцы проверят историю аккаунта, жалобы, предупреждения и события Protect. После решения вы получите уведомление в боте.
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🛡 Мой статус Protect", callback_data="protect_status")],
+            [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"), InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")],
+        ]),
+        parse_mode="HTML",
+    )
+
+
+@dp.callback_query(F.data == "admin_protect_appeals")
+async def admin_protect_appeals(call: CallbackQuery):
+    if not is_owner(call.from_user.id):
+        await call.answer("Апелляции видят только владельцы", show_alert=True)
+        return
+    ensure_admin_tables()
+    with db() as conn:
+        rows = conn.execute("""
+            SELECT id, user_id, reason, created_at
+            FROM protect_appeals
+            WHERE status='pending'
+            ORDER BY id DESC
+            LIMIT 10
+        """).fetchall()
+    if not rows:
+        await show_screen(call, "⚖️ Новых апелляций Protect нет.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Безопасность", callback_data="admin_security_center")]]), parse_mode="HTML")
+        await call.answer()
+        return
+    text = "━━━━━━━━━━━━━━\n⚖️ <b>Апелляции Protect</b>\n━━━━━━━━━━━━━━\n\n"
+    buttons = []
+    for appeal_id, user_id, reason, created_at in rows:
+        risk = get_user_security_score(user_id)
+        text += f"""
+<b>#{appeal_id}</b> • Пользователь: <code>{user_id}</code>
+Риск: <b>{risk['badge']}</b> / <b>{risk['score']}/100</b>
+Дата: <code>{html.escape((created_at or '')[:16])}</code>
+Текст: {html.escape((reason or '')[:220])}
+
+"""
+        buttons.append([InlineKeyboardButton(text=f"✅ Одобрить #{appeal_id}", callback_data=f"admin_appeal_approve:{appeal_id}"), InlineKeyboardButton(text=f"❌ Отклонить #{appeal_id}", callback_data=f"admin_appeal_reject:{appeal_id}")])
+        buttons.append([InlineKeyboardButton(text=f"👤 Пользователь {user_id}", callback_data=f"admin_user:{user_id}")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Безопасность", callback_data="admin_security_center")])
+    await show_screen(call, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+    await call.answer()
+
+
+@dp.callback_query(F.data.startswith("admin_appeal_approve:"))
+async def admin_appeal_approve(call: CallbackQuery):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только владелец может одобрять апелляции", show_alert=True)
+        return
+    appeal_id = int(call.data.split(":")[1])
+    ensure_admin_tables()
+    with db() as conn:
+        row = conn.execute("SELECT user_id, reason, status FROM protect_appeals WHERE id=?", (appeal_id,)).fetchone()
+    if not row:
+        await call.answer("Апелляция не найдена", show_alert=True)
+        return
+    user_id, reason, status = row
+    if status != "pending":
+        await call.answer("Апелляция уже обработана", show_alert=True)
+        return
+    create_protect_override(user_id, call.from_user.id, f"Апелляция #{appeal_id} одобрена", days=30)
+    with db() as conn:
+        conn.execute("""
+            UPDATE protect_appeals
+            SET status='approved', reviewer_id=?, admin_comment=?, reviewed_at=?
+            WHERE id=?
+        """, (call.from_user.id, "Ограничения Protect сняты на 30 дней", datetime.now().isoformat(), appeal_id))
+        conn.commit()
+    log_admin_action(call.from_user.id, "protect_appeal_approved", user_id, f"appeal_id={appeal_id}")
+    register_security_event(user_id, "protect_appeal_approved", f"appeal #{appeal_id}", status="closed")
+    try:
+        await bot.send_message(user_id, f"""
+✅ <b>Апелляция Protect одобрена</b>
+
+Заявка: <b>#{appeal_id}</b>
+Ограничения LTeam Protect сняты на <b>30 дней</b>.
+
+Важно: если снова будут попытки обхода гаранта, жалобы или нарушения, ограничения вернутся.
+""", parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer("Апелляция одобрена", show_alert=True)
+    call.data = "admin_protect_appeals"
+    await admin_protect_appeals(call)
+
+
+@dp.callback_query(F.data.startswith("admin_appeal_reject:"))
+async def admin_appeal_reject(call: CallbackQuery):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только владелец может отклонять апелляции", show_alert=True)
+        return
+    appeal_id = int(call.data.split(":")[1])
+    ensure_admin_tables()
+    with db() as conn:
+        row = conn.execute("SELECT user_id, reason, status FROM protect_appeals WHERE id=?", (appeal_id,)).fetchone()
+    if not row:
+        await call.answer("Апелляция не найдена", show_alert=True)
+        return
+    user_id, reason, status = row
+    if status != "pending":
+        await call.answer("Апелляция уже обработана", show_alert=True)
+        return
+    with db() as conn:
+        conn.execute("""
+            UPDATE protect_appeals
+            SET status='rejected', reviewer_id=?, admin_comment=?, reviewed_at=?
+            WHERE id=?
+        """, (call.from_user.id, "Апелляция отклонена владельцем", datetime.now().isoformat(), appeal_id))
+        conn.commit()
+    log_admin_action(call.from_user.id, "protect_appeal_rejected", user_id, f"appeal_id={appeal_id}")
+    register_security_event(user_id, "protect_appeal_rejected", f"appeal #{appeal_id}", status="closed")
+    try:
+        await bot.send_message(user_id, f"""
+❌ <b>Апелляция Protect отклонена</b>
+
+Заявка: <b>#{appeal_id}</b>
+Ограничения остаются активными.
+
+Вы можете снизить риск: не нарушать правила, не уводить сделки в личку, работать через гаранта и дождаться повторной проверки.
+""", parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer("Апелляция отклонена", show_alert=True)
+    call.data = "admin_protect_appeals"
+    await admin_protect_appeals(call)
+
+
+@dp.callback_query(F.data == "admin_security_center")
+async def admin_security_center(call: CallbackQuery):
+    if not is_staff(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+
+    ensure_admin_tables()
+    now = datetime.now()
+    day_ago = now - timedelta(days=1)
+
+    with db() as conn:
         new_reports = conn.execute("SELECT COUNT(*) FROM reports WHERE COALESCE(status,'new')='new'").fetchone()[0]
-        events = conn.execute("SELECT COUNT(*) FROM security_events WHERE COALESCE(status,'new')='new'").fetchone()[0]
+        events_new = conn.execute("SELECT COUNT(*) FROM security_events WHERE COALESCE(status,'new')='new'").fetchone()[0]
+        events_24h = conn.execute("SELECT COUNT(*) FROM security_events WHERE created_at>=?", (day_ago.isoformat(),)).fetchone()[0]
+        appeals = conn.execute("SELECT COUNT(*) FROM protect_appeals WHERE status='pending'").fetchone()[0]
         banned = conn.execute("SELECT COUNT(*) FROM banned_users").fetchone()[0]
+        active_mutes = conn.execute("SELECT COUNT(*) FROM muted_users WHERE muted_until>?", (now.isoformat(),)).fetchone()[0]
         warnings = conn.execute("SELECT COUNT(*) FROM admin_warnings").fetchone()[0]
-        tickets = conn.execute("SELECT COUNT(*) FROM tickets WHERE status='open'").fetchone()[0]
+        last_events = conn.execute("""
+            SELECT user_id, event_type, context, status, created_at
+            FROM security_events
+            ORDER BY id DESC
+            LIMIT 7
+        """).fetchall()
+
+    events_text = ""
+    if last_events:
+        for uid, event_type, context, status, created_at in last_events:
+            events_text += (
+                f"• <code>{uid}</code> — <b>{html.escape(event_type or 'event')}</b>\n"
+                f"  {html.escape(context or '—')} • <code>{html.escape(status or 'new')}</code> • {html.escape((created_at or '')[:16])}\n"
+            )
+    else:
+        events_text = "Событий пока нет."
+
     await show_screen(call, f"""
 ━━━━━━━━━━━━━━
-🛡 <b>Центр безопасности</b>
+🛡 <b>Security Center</b>
 ━━━━━━━━━━━━━━
 
 🚨 Новые жалобы: <b>{new_reports}</b>
-⚠️ Подозрительные сообщения: <b>{events}</b>
-🆘 Открытые обращения: <b>{tickets}</b>
-🚫 Забанено пользователей: <b>{banned}</b>
-📌 Предупреждений выдано: <b>{warnings}</b>
+⚠️ Новые security events: <b>{events_new}</b>
+🕒 Events за 24ч: <b>{events_24h}</b>
+⚖️ Апелляции Protect: <b>{appeals}</b>
+🚫 Баны: <b>{banned}</b>
+🔇 Активные муты: <b>{active_mutes}</b>
+📌 Всего предупреждений: <b>{warnings}</b>
+
+<b>Последние события:</b>
+{events_text}
 """, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"🚨 Жалобы ({new_reports})", callback_data="admin_reports"), InlineKeyboardButton(text=f"⚠️ Protect ({events})", callback_data="admin_security_events")],
-        [InlineKeyboardButton(text="🆘 Поддержка", callback_data="admin_tickets_v2"), InlineKeyboardButton(text="🚫 Баны", callback_data="admin_bans_list")],
+        [InlineKeyboardButton(text=f"🚨 Жалобы ({new_reports})", callback_data="admin_reports"), InlineKeyboardButton(text=f"⚠️ Events ({events_new})", callback_data="admin_security_events")],
+        [InlineKeyboardButton(text=f"⚖️ Апелляции ({appeals})", callback_data="admin_protect_appeals")],
+        [InlineKeyboardButton(text="🚫 Баны", callback_data="admin_bans_list"), InlineKeyboardButton(text="📜 Логи", callback_data="admin_logs_page:0")],
         [InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")],
     ]), parse_mode="HTML")
     await call.answer()
-
 
 @dp.callback_query(F.data == "admin_security_events")
 async def admin_security_events(call: CallbackQuery):
@@ -7173,9 +12065,9 @@ async def admin_roles_panel(call: CallbackQuery):
 @dp.callback_query(F.data == "admin_role_add_start")
 async def admin_role_add_start(call: CallbackQuery, state: FSMContext):
     if not is_owner(call.from_user.id):
-        await call.answer("Только владелец", show_alert=True); return
-    await state.set_state(AdminRoleState.user_id)
-    await show_screen(call, "👑 Отправьте Telegram ID пользователя, которому нужно назначить роль:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Роли", callback_data="admin_roles_panel")]]))
+        await call.answer("Только владелец", show_alert=True)
+        return
+    await ask_admin_user_query(call, state, "role", "👑 <b>Назначение роли</b>", "admin_roles_panel")
     await call.answer()
 
 
@@ -7183,9 +12075,15 @@ async def admin_role_add_start(call: CallbackQuery, state: FSMContext):
 async def admin_role_add_id(message: Message, state: FSMContext):
     if not is_owner(message.from_user.id):
         await state.clear(); return
-    if not message.text or not message.text.strip().isdigit():
-        await screen_answer(message, "Отправьте числовой ID."); return
-    uid = int(message.text.strip())
+    rows = find_users_for_admin(message.text or "")
+    if not rows:
+        await screen_answer(message, "❌ Пользователь не найден. Введите ID, @username или ник.", parse_mode="HTML")
+        return
+    if len(rows) > 1:
+        await state.clear()
+        await screen_answer(message, "Найдено несколько пользователей:", reply_markup=user_pick_keyboard(rows, "role", "admin_roles_panel"), parse_mode="HTML")
+        return
+    uid = int(rows[0][0])
     await state.clear()
     await screen_answer(message, f"Выберите роль для <code>{uid}</code>:", reply_markup=role_choose_keyboard(uid), parse_mode="HTML")
 
@@ -7233,7 +12131,11 @@ async def admin_set_role(call: CallbackQuery):
         with db() as conn:
             conn.execute("INSERT OR REPLACE INTO staff_roles (user_id, role, assigned_by, created_at) VALUES (?, ?, ?, ?)", (uid, role, call.from_user.id, datetime.now().isoformat()))
             conn.commit()
-        log_admin_action(call.from_user.id, "set_role", uid, role)
+
+        # Если пользователя повысили до staff после старых санкций,
+        # очищаем ошибочные бан/мут сразу, не дожидаясь следующего сообщения.
+        cleaned = cleanup_protected_punishments()
+        log_admin_action(call.from_user.id, "set_role", uid, f"role={role}; cleanup={cleaned}")
         await call.answer("Роль назначена", show_alert=True)
     call.data = f"admin_user:{uid}"
     await admin_user_profile(call)
@@ -7309,21 +12211,38 @@ async def admin_mute_user_start(call: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data.startswith("admin_mute_duration:"))
 async def admin_mute_duration(call: CallbackQuery, state: FSMContext):
     if not is_staff(call.from_user.id):
-        await call.answer("Нет доступа", show_alert=True); return
+        await call.answer("Нет доступа", show_alert=True)
+        return
+
     minutes = int(call.data.split(":")[1])
     data = await state.get_data()
     uid = int(data.get("mute_user_id") or 0)
+
     if not uid:
-        await call.answer("Пользователь потерян", show_alert=True); return
-    set_mute(uid, minutes, "Мут выдан модерацией", muted_by=call.from_user.id)
-    log_admin_action(call.from_user.id, "mute_user", uid, f"{minutes} minutes")
-    try: await bot.send_message(uid, f"🔇 Вам выдан мут на {minutes} мин. Причина: модерация LTeam")
-    except Exception: pass
+        await call.answer("Пользователь потерян", show_alert=True)
+        return
+
+    ok, reason = can_act(call.from_user.id, uid, "mute")
+    if not ok:
+        await state.clear()
+        await call.answer(reason, show_alert=True)
+        return
+
+    muted = set_mute(uid, minutes, "Мут выдан модерацией", muted_by=call.from_user.id)
+    if not muted:
+        await state.clear()
+        await call.answer("Мут не выдан: пользователь защищён системой ролей.", show_alert=True)
+        return
+
+    try:
+        await bot.send_message(uid, f"🔇 Вам выдан мут на {minutes} мин. Причина: модерация LTeam")
+    except Exception:
+        pass
+
     await state.clear()
     await call.answer("Мут выдан", show_alert=True)
     call.data = f"admin_user:{uid}"
     await admin_user_profile(call)
-
 
 @dp.callback_query(F.data.startswith("report_admin:"))
 async def report_admin_start(call: CallbackQuery, state: FSMContext):
@@ -7332,18 +12251,1348 @@ async def report_admin_start(call: CallbackQuery, state: FSMContext):
     await state.set_state(ReportState.reason)
     await show_screen(call, "🚨 Опишите жалобу на администратора. Она будет отправлена владельцам и не будет видна этому администратору.")
     await call.answer()
+
+
+# ===== LTEAM PROFILE ADMIN TOOLS =====
+
+@dp.callback_query(F.data == "admin_verification_requests")
+async def admin_verification_requests(call: CallbackQuery):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только владельцы", show_alert=True)
+        return
+    ensure_profile_tables()
+    with db() as conn:
+        rows = conn.execute("""
+            SELECT id, user_id, reason, created_at
+            FROM verification_requests
+            WHERE status='pending'
+            ORDER BY id DESC
+            LIMIT 15
+        """).fetchall()
+    if not rows:
+        await show_screen(call, "✅ Заявок на галочку нет.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")]]), parse_mode="HTML")
+        await call.answer()
+        return
+    text = "━━━━━━━━━━━━━━\n✅ <b>Заявки на галочку</b>\n━━━━━━━━━━━━━━\n\n"
+    buttons = []
+    for req_id, user_id, reason, created_at in rows:
+        text += f"<b>#{req_id}</b> • <code>{user_id}</code> • {profile_title(user_id)}\n"
+        text += f"Причина: {html.escape((reason or '')[:180])}\n\n"
+        buttons.append([InlineKeyboardButton(text=f"✅ Одобрить #{req_id}", callback_data=f"verify_req_approve:{req_id}"), InlineKeyboardButton(text=f"❌ Отклонить #{req_id}", callback_data=f"verify_req_reject:{req_id}")])
+        buttons.append([InlineKeyboardButton(text=f"👤 Открыть пользователя {user_id}", callback_data=f"admin_user:{user_id}")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")])
+    await show_screen(call, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+    await call.answer()
+
+
+@dp.callback_query(F.data.startswith("verify_req_approve:"))
+async def verify_req_approve(call: CallbackQuery):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только владельцы", show_alert=True)
+        return
+    req_id = int(call.data.split(":")[1])
+    ensure_profile_tables()
+    with db() as conn:
+        row = conn.execute("SELECT user_id, status FROM verification_requests WHERE id=?", (req_id,)).fetchone()
+        if not row:
+            await call.answer("Заявка не найдена", show_alert=True)
+            return
+        user_id, status = row
+        if status != "pending":
+            await call.answer("Заявка уже обработана", show_alert=True)
+            return
+        conn.execute("UPDATE users SET verified=1 WHERE user_id=?", (user_id,))
+        conn.execute("""
+            UPDATE verification_requests
+            SET status='approved', reviewed_by=?, decision='approved', reviewed_at=?
+            WHERE id=?
+        """, (call.from_user.id, datetime.now().isoformat(), req_id))
+        conn.commit()
+    log_admin_action(call.from_user.id, "approve_verification", user_id, f"request_id={req_id}")
+    try:
+        await bot.send_message(user_id, "✅ Ваша заявка на галочку одобрена. Теперь в профиле отображается верификация LTeam.")
+    except Exception:
+        pass
+    await call.answer("Галочка выдана", show_alert=True)
+    await admin_verification_requests(call)
+
+
+@dp.callback_query(F.data.startswith("verify_req_reject:"))
+async def verify_req_reject(call: CallbackQuery):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только владельцы", show_alert=True)
+        return
+    req_id = int(call.data.split(":")[1])
+    ensure_profile_tables()
+    with db() as conn:
+        row = conn.execute("SELECT user_id, status FROM verification_requests WHERE id=?", (req_id,)).fetchone()
+        if not row:
+            await call.answer("Заявка не найдена", show_alert=True)
+            return
+        user_id, status = row
+        if status != "pending":
+            await call.answer("Заявка уже обработана", show_alert=True)
+            return
+        conn.execute("""
+            UPDATE verification_requests
+            SET status='rejected', reviewed_by=?, decision='rejected', reviewed_at=?
+            WHERE id=?
+        """, (call.from_user.id, datetime.now().isoformat(), req_id))
+        conn.commit()
+    log_admin_action(call.from_user.id, "reject_verification", user_id, f"request_id={req_id}")
+    try:
+        await bot.send_message(user_id, "❌ Заявка на галочку отклонена. Вы можете улучшить профиль, завершить сделки и подать заявку позже.")
+    except Exception:
+        pass
+    await call.answer("Заявка отклонена", show_alert=True)
+    await admin_verification_requests(call)
+
+
+@dp.callback_query(F.data.startswith("admin_grant_plus:"))
+async def admin_grant_plus(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+
+    user_id = int(call.data.split(":")[1])
+
+    ok, reason = can_act(call.from_user.id, user_id, "grant_plus")
+    if not ok:
+        await call.answer(reason, show_alert=True)
+        return
+
+    until = set_user_plus(user_id, LTEAM_PLUS_DAYS_DEFAULT, actor_id=call.from_user.id)
+
+    try:
+        await bot.send_message(
+            user_id,
+            f"💎 Вам активирована подписка LTeam Plus на {LTEAM_PLUS_DAYS_DEFAULT} дней."
+        )
+    except Exception:
+        pass
+
+    log_admin_action(call.from_user.id, "grant_lteam_plus", user_id, f"until={until}")
+    await call.answer("LTeam Plus активирован", show_alert=True)
+    call.data = f"admin_user:{user_id}"
+    await admin_user_profile(call)
+
+
+# ===== LTEAM ADMIN CENTER V2 ADDONS =====
+
+def cleanup_protected_punishments() -> int:
+    """Удаляет старые ошибочные баны/муты владельцев, админов и модераторов."""
+    ensure_admin_tables()
+    protected_ids = protected_staff_ids()
+
+    with db() as conn:
+        changed = 0
+        for uid in protected_ids:
+            ban_deleted = conn.execute("DELETE FROM banned_users WHERE user_id=?", (uid,)).rowcount
+            mute_deleted = conn.execute("DELETE FROM muted_users WHERE user_id=?", (uid,)).rowcount
+
+            if ban_deleted or mute_deleted:
+                changed += ban_deleted + mute_deleted
+                conn.execute(
+                    """
+                    INSERT INTO admin_action_logs
+                    (actor_id, target_id, action, details, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (0, uid, "cleanup_protected_punishment", "removed ban/mute from protected staff", datetime.now().isoformat())
+                )
+
+        conn.commit()
+
+    return changed
+
+
+def staff_safety_snapshot() -> dict:
+    """Сводка по защищённым staff-аккаунтам и ошибочным старым санкциям."""
+    ensure_admin_tables()
+    protected_ids = sorted(protected_staff_ids())
+
+    if not protected_ids:
+        return {
+            "protected_count": 0,
+            "staff_rows": [],
+            "banned_rows": [],
+            "muted_rows": [],
+            "env_owner_count": len(OWNER_IDS),
+            "env_admin_count": len(ADMIN_IDS),
+            "env_moderator_count": len(MODERATOR_IDS),
+        }
+
+    placeholders = ",".join("?" for _ in protected_ids)
+    with db() as conn:
+        staff_rows = conn.execute(
+            f"""
+            SELECT user_id, role, COALESCE(assigned_by, 0), COALESCE(created_at, '')
+            FROM staff_roles
+            WHERE user_id IN ({placeholders})
+            ORDER BY CASE role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 WHEN 'moderator' THEN 2 ELSE 3 END, user_id
+            """,
+            protected_ids,
+        ).fetchall()
+        banned_rows = conn.execute(
+            f"SELECT user_id, COALESCE(reason,''), COALESCE(banned_by,0) FROM banned_users WHERE user_id IN ({placeholders}) ORDER BY user_id",
+            protected_ids,
+        ).fetchall()
+        muted_rows = conn.execute(
+            f"SELECT user_id, COALESCE(muted_until,''), COALESCE(reason,''), COALESCE(muted_by,0) FROM muted_users WHERE user_id IN ({placeholders}) ORDER BY user_id",
+            protected_ids,
+        ).fetchall()
+
+    return {
+        "protected_count": len(protected_ids),
+        "staff_rows": staff_rows,
+        "banned_rows": banned_rows,
+        "muted_rows": muted_rows,
+        "env_owner_count": len(OWNER_IDS),
+        "env_admin_count": len(ADMIN_IDS),
+        "env_moderator_count": len(MODERATOR_IDS),
+    }
+
+
+@dp.callback_query(F.data == "admin_staff_safety")
+async def admin_staff_safety(call: CallbackQuery):
+    ok, reason = can_act(call.from_user.id, None, "cleanup_staff_punishments")
+    if not ok:
+        await call.answer(reason, show_alert=True)
+        return
+
+    snap = staff_safety_snapshot()
+    banned_count = len(snap.get("banned_rows", []))
+    muted_count = len(snap.get("muted_rows", []))
+    state_badge = "🟢 Норма" if banned_count == 0 and muted_count == 0 else "🟠 Есть старые санкции для очистки"
+
+    staff_preview = []
+    for uid, role, assigned_by, created_at in snap.get("staff_rows", [])[:12]:
+        staff_preview.append(f"• <code>{uid}</code> — <b>{html.escape(role or 'user')}</b>")
+    if not staff_preview:
+        staff_preview.append("• роли из БД пока не назначены")
+
+    await show_screen(
+        call,
+        f"""
+━━━━━━━━━━━━━━
+🛡 <b>Staff Safety Center</b>
+━━━━━━━━━━━━━━
+
+Состояние: <b>{state_badge}</b>
+
+<b>Защищённые аккаунты:</b> <b>{snap.get('protected_count', 0)}</b>
+• OWNER_IDS в .env: <b>{snap.get('env_owner_count', 0)}</b>
+• ADMIN_IDS в .env: <b>{snap.get('env_admin_count', 0)}</b>
+• MODERATOR_IDS в .env: <b>{snap.get('env_moderator_count', 0)}</b>
+
+<b>Проверка санкций:</b>
+• ошибочных банов staff: <b>{banned_count}</b>
+• ошибочных мутов staff: <b>{muted_count}</b>
+
+<b>Staff из базы:</b>
+{chr(10).join(staff_preview)}
+
+Правило LTeam:
+<b>owner / admin / moderator нельзя банить, мутить или варнить через обычную админку.</b>
+Если нужно наказать staff — владелец сначала снимает роль, затем применяет обычное действие.
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🧹 Очистить старые санкции", callback_data="admin_cleanup_staff_punishments")],
+            [InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_staff_safety")],
+            [InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")],
+        ]),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@dp.callback_query(F.data == "admin_cleanup_staff_punishments")
+async def admin_cleanup_staff_punishments(call: CallbackQuery):
+    ok, reason = can_act(call.from_user.id, None, "cleanup_staff_punishments")
+    if not ok:
+        await call.answer(reason, show_alert=True)
+        return
+
+    changed = cleanup_protected_punishments()
+    log_admin_action(call.from_user.id, "manual_cleanup_staff_punishments", None, f"changed={changed}")
+
+    await call.answer(f"Готово. Исправлено записей: {changed}", show_alert=True)
+    await admin_panel(call)
+
+
+@dp.callback_query(F.data.startswith("admin_logs_page:"))
+async def admin_logs_page(call: CallbackQuery):
+    ok, reason = can_act(call.from_user.id, None, "view_logs")
+    if not ok:
+        await call.answer(reason, show_alert=True)
+        return
+
+    page = int(call.data.split(":")[1])
+    limit = 10
+    offset = page * limit
+
+    with db() as conn:
+        rows = conn.execute("""
+            SELECT actor_id, target_id, action, details, created_at
+            FROM admin_action_logs
+            ORDER BY id DESC
+            LIMIT ? OFFSET ?
+        """, (limit, offset)).fetchall()
+
+    text = """
+━━━━━━━━━━━━━━
+📜 <b>Админ-логи</b>
+━━━━━━━━━━━━━━
+
+"""
+
+    if not rows:
+        text += "Логов пока нет."
+    else:
+        for actor_id, target_id, action, details, created_at in rows:
+            text += (
+                f"• <b>{html.escape(action or 'action')}</b>\n"
+                f"  Кто: <code>{actor_id}</code>\n"
+                f"  Цель: <code>{target_id or '—'}</code>\n"
+                f"  Детали: {html.escape((details or '—')[:180])}\n"
+                f"  Время: <code>{html.escape((created_at or '')[:16])}</code>\n\n"
+            )
+
+    buttons = []
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"admin_logs_page:{page - 1}"))
+    if len(rows) == limit:
+        nav.append(InlineKeyboardButton(text="➡️ Далее", callback_data=f"admin_logs_page:{page + 1}"))
+    if nav:
+        buttons.append(nav)
+
+    buttons.append([InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")])
+
+    await show_screen(call, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+    await call.answer()
+
+
+@dp.callback_query(F.data == "admin_subscriptions_center")
+async def admin_subscriptions_center(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+
+    await show_screen(call, """
+━━━━━━━━━━━━━━
+💎 <b>Plus / Verified Center</b>
+━━━━━━━━━━━━━━
+
+Рабочий сценарий:
+1. Найдите пользователя.
+2. Откройте карточку.
+3. Выдайте LTeam Plus или Verified.
+4. Действие будет проверено через роли и записано в логи.
+
+Защита:
+• админ не может выдать/снять статус равной или старшей роли;
+• владельца нельзя изменить через обычную админку;
+• все действия пишутся в admin_action_logs.
+""", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔎 Найти пользователя", callback_data="admin_find_user")],
+        [InlineKeyboardButton(text="📜 Логи", callback_data="admin_logs_page:0")],
+        [InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")],
+    ]), parse_mode="HTML")
+    await call.answer()
+
+
+
+# ===== LTEAM MARKET V7: ГИБКИЕ РЕКВИЗИТЫ ВЫПЛАТ =====
+
+class PayoutProfileState(StatesGroup):
+    card_or_phone = State()
+    ton_wallet = State()
+
+
+def ensure_payout_profile_tables() -> None:
+    """Профиль выплат пользователя: карта/номер и TON можно хранить независимо."""
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_payout_profiles (
+            user_id INTEGER PRIMARY KEY,
+            card_or_phone TEXT,
+            ton_wallet TEXT,
+            preferred_method TEXT DEFAULT '',
+            created_at TEXT,
+            updated_at TEXT
+        )
+        """)
+        for column_sql in [
+            "card_or_phone TEXT",
+            "ton_wallet TEXT",
+            "preferred_method TEXT DEFAULT ''",
+            "created_at TEXT",
+            "updated_at TEXT",
+        ]:
+            try:
+                cur.execute(f"ALTER TABLE user_payout_profiles ADD COLUMN {column_sql}")
+            except sqlite3.OperationalError:
+                pass
+        conn.commit()
+
+
+def get_payout_profile(user_id: int) -> dict:
+    ensure_payout_profile_tables()
+    with db() as conn:
+        row = conn.execute("""
+            SELECT card_or_phone, ton_wallet, preferred_method, created_at, updated_at
+            FROM user_payout_profiles
+            WHERE user_id=?
+        """, (user_id,)).fetchone()
+
+    if not row:
+        return {
+            "card_or_phone": "",
+            "ton_wallet": "",
+            "preferred_method": "",
+            "has_any": False,
+            "created_at": "",
+            "updated_at": "",
+        }
+
+    card_or_phone, ton_wallet, preferred_method, created_at, updated_at = row
+    return {
+        "card_or_phone": card_or_phone or "",
+        "ton_wallet": ton_wallet or "",
+        "preferred_method": preferred_method or "",
+        "has_any": bool(card_or_phone or ton_wallet),
+        "created_at": created_at or "",
+        "updated_at": updated_at or "",
+    }
+
+
+def mask_card_or_phone(value: str) -> str:
+    value = (value or "").strip()
+    digits = re.sub(r"\D+", "", value)
+
+    if len(digits) >= 12:
+        return f"**** **** **** {digits[-4:]}"
+    if len(digits) >= 7:
+        return f"+*** *** {digits[-4:]}"
+    if value:
+        return html.escape(value[:3] + "***")
+    return "не привязано"
+
+
+def mask_ton_wallet(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return "не привязано"
+    if len(value) <= 12:
+        return html.escape(value)
+    return html.escape(f"{value[:6]}...{value[-6:]}")
+
+
+def payout_profile_text(user_id: int) -> str:
+    profile = get_payout_profile(user_id)
+    preferred = profile.get("preferred_method") or "не выбран"
+
+    preferred_text = {
+        "card": "Карта/номер",
+        "ton": "TON-кошелёк",
+        "": "не выбран",
+    }.get(preferred, preferred)
+
+    return f"""
+━━━━━━━━━━━━━━
+💳 <b>Реквизиты выплат</b>
+━━━━━━━━━━━━━━
+
+Основной способ: <b>{html.escape(preferred_text)}</b>
+
+💳 Карта/номер: <code>{mask_card_or_phone(profile.get('card_or_phone', ''))}</code>
+💎 TON: <code>{mask_ton_wallet(profile.get('ton_wallet', ''))}</code>
+
+Реквизиты нужны только для вывода средств после завершённых сделок.
+Создать заказ и откликнуться можно без привязки реквизитов.
+
+Можно привязать только один способ сейчас, а второй добавить позже в профиле.
+"""
+
+
+def payout_profile_keyboard(next_callback: str = "profile") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="💳 Привязать карту/номер", callback_data=f"payout_bind_card:{next_callback}"),
+        ],
+        [
+            InlineKeyboardButton(text="💎 Привязать TON", callback_data=f"payout_bind_ton:{next_callback}"),
+        ],
+        [
+            InlineKeyboardButton(text="⬅️ Назад", callback_data=next_callback),
+        ],
+    ])
+
+
+def payout_has_any_method(user_id: int) -> bool:
+    return bool(get_payout_profile(user_id).get("has_any"))
+
+
+def payout_missing_text(action_title: str) -> str:
+    return f"""
+💳 <b>Нужно привязать реквизиты</b>
+
+Чтобы продолжить: <b>{html.escape(action_title)}</b>, выберите один способ выплат:
+
+• <b>Карта/номер</b> — можно указать карту или телефон для перевода.
+• <b>TON</b> — кошелёк Telegram/TON.
+
+Это нужно сделать только один раз. Второй способ можно добавить позже в профиле.
+"""
+
+
+def normalize_card_or_phone(value: str) -> tuple[bool, str, str]:
+    raw = (value or "").strip()
+    digits = re.sub(r"\D+", "", raw)
+
+    if not raw:
+        return False, "", "Введите карту или номер телефона."
+
+    # Карта: 13-19 цифр, телефон: 10-15 цифр.
+    if digits and 10 <= len(digits) <= 19:
+        return True, raw, ""
+
+    return False, "", "Некорректный формат. Введите карту или номер телефона, например: 2200 0000 0000 0000 или +79990000000."
+
+
+def normalize_ton_wallet(value: str) -> tuple[bool, str, str]:
+    raw = (value or "").strip()
+
+    if not raw:
+        return False, "", "Введите TON-кошелёк."
+
+    if len(raw) < 24:
+        return False, "", "TON-кошелёк выглядит слишком коротким."
+
+    if " " in raw:
+        return False, "", "TON-кошелёк не должен содержать пробелы."
+
+    # Не делаем слишком жёсткую проверку, потому что TON-адреса бывают user-friendly/base64url/raw.
+    allowed = re.match(r"^[A-Za-z0-9_\-:]+$", raw) is not None
+    if not allowed:
+        return False, "", "TON-кошелёк содержит недопустимые символы."
+
+    return True, raw, ""
+
+
+def save_payout_card_or_phone(user_id: int, value: str) -> None:
+    ensure_payout_profile_tables()
+    now = datetime.now().isoformat()
+    with db() as conn:
+        existing = conn.execute("SELECT user_id FROM user_payout_profiles WHERE user_id=?", (user_id,)).fetchone()
+        if existing:
+            conn.execute("""
+                UPDATE user_payout_profiles
+                SET card_or_phone=?, preferred_method=CASE
+                    WHEN COALESCE(preferred_method,'')='' THEN 'card'
+                    ELSE preferred_method
+                END, updated_at=?
+                WHERE user_id=?
+            """, (value, now, user_id))
+        else:
+            conn.execute("""
+                INSERT INTO user_payout_profiles
+                (user_id, card_or_phone, ton_wallet, preferred_method, created_at, updated_at)
+                VALUES (?, ?, '', 'card', ?, ?)
+            """, (user_id, value, now, now))
+        conn.commit()
+
+
+def save_payout_ton_wallet(user_id: int, value: str) -> None:
+    ensure_payout_profile_tables()
+    now = datetime.now().isoformat()
+    with db() as conn:
+        existing = conn.execute("SELECT user_id FROM user_payout_profiles WHERE user_id=?", (user_id,)).fetchone()
+        if existing:
+            conn.execute("""
+                UPDATE user_payout_profiles
+                SET ton_wallet=?, preferred_method=CASE
+                    WHEN COALESCE(preferred_method,'')='' THEN 'ton'
+                    ELSE preferred_method
+                END, updated_at=?
+                WHERE user_id=?
+            """, (value, now, user_id))
+        else:
+            conn.execute("""
+                INSERT INTO user_payout_profiles
+                (user_id, card_or_phone, ton_wallet, preferred_method, created_at, updated_at)
+                VALUES (?, '', ?, 'ton', ?, ?)
+            """, (user_id, value, now, now))
+        conn.commit()
+
+
+def payout_continue_keyboard(next_callback: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Продолжить", callback_data=next_callback)],
+        [InlineKeyboardButton(text="💳 Реквизиты", callback_data=f"payout_profile:{next_callback}")],
+        [InlineKeyboardButton(text="⬅️ В профиль", callback_data="profile")],
+    ])
+
+
+async def require_payout_or_ask(call: CallbackQuery, action_title: str, next_callback: str) -> bool:
+    """Возвращает True, если реквизиты есть. Иначе показывает UX привязки."""
+    if payout_has_any_method(call.from_user.id):
+        return True
+
+    await show_screen(
+        call,
+        payout_missing_text(action_title),
+        reply_markup=payout_profile_keyboard(next_callback),
+        parse_mode="HTML",
+    )
+    await call.answer("Сначала привяжите реквизиты", show_alert=True)
+    return False
+
+
+@dp.callback_query(F.data.startswith("payout_profile:"))
+async def payout_profile_open(call: CallbackQuery):
+    next_callback = call.data.split(":", 1)[1] if ":" in call.data else "profile"
+    await show_screen(
+        call,
+        payout_profile_text(call.from_user.id),
+        reply_markup=payout_profile_keyboard(next_callback),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@dp.callback_query(F.data.startswith("payout_bind_card:"))
+async def payout_bind_card_start(call: CallbackQuery, state: FSMContext):
+    next_callback = call.data.split(":", 1)[1] if ":" in call.data else "profile"
+    await state.set_state(PayoutProfileState.card_or_phone)
+    await state.update_data(payout_next_callback=next_callback)
+
+    await show_screen(
+        call,
+        """
+💳 <b>Привязка карты/номера</b>
+
+Отправьте одним сообщением:
+• номер карты;
+или
+• номер телефона для перевода.
+
+Примеры:
+<code>2200 0000 0000 0000</code>
+<code>+79990000000</code>
+
+TON можно будет добавить позже в профиле.
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"payout_profile:{next_callback}")]
+        ]),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@dp.message(PayoutProfileState.card_or_phone)
+async def payout_bind_card_finish(message: Message, state: FSMContext):
+    data = await state.get_data()
+    next_callback = data.get("payout_next_callback", "profile")
+
+    ok, value, error = normalize_card_or_phone(message.text or "")
+    if not ok:
+        await screen_answer(
+            message,
+            f"❌ {html.escape(error)}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💳 Попробовать снова", callback_data=f"payout_bind_card:{next_callback}")],
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"payout_profile:{next_callback}")],
+            ]),
+            parse_mode="HTML",
+        )
+        return
+
+    save_payout_card_or_phone(message.from_user.id, value)
+    await state.clear()
+
+    await screen_answer(
+        message,
+        f"""
+✅ <b>Карта/номер привязаны</b>
+
+Сохранено: <code>{mask_card_or_phone(value)}</code>
+
+TON можно добавить позже в профиле.
+""",
+        reply_markup=payout_continue_keyboard(next_callback),
+        parse_mode="HTML",
+    )
+
+
+@dp.callback_query(F.data.startswith("payout_bind_ton:"))
+async def payout_bind_ton_start(call: CallbackQuery, state: FSMContext):
+    next_callback = call.data.split(":", 1)[1] if ":" in call.data else "profile"
+    await state.set_state(PayoutProfileState.ton_wallet)
+    await state.update_data(payout_next_callback=next_callback)
+
+    await show_screen(
+        call,
+        """
+💎 <b>Привязка TON-кошелька</b>
+
+Отправьте TON-адрес одним сообщением.
+
+Подойдут адреса формата:
+<code>UQ...</code>, <code>EQ...</code> или raw-адрес.
+
+Карту/номер можно будет добавить позже в профиле.
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"payout_profile:{next_callback}")]
+        ]),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@dp.message(PayoutProfileState.ton_wallet)
+async def payout_bind_ton_finish(message: Message, state: FSMContext):
+    data = await state.get_data()
+    next_callback = data.get("payout_next_callback", "profile")
+
+    ok, value, error = normalize_ton_wallet(message.text or "")
+    if not ok:
+        await screen_answer(
+            message,
+            f"❌ {html.escape(error)}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💎 Попробовать снова", callback_data=f"payout_bind_ton:{next_callback}")],
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"payout_profile:{next_callback}")],
+            ]),
+            parse_mode="HTML",
+        )
+        return
+
+    save_payout_ton_wallet(message.from_user.id, value)
+    await state.clear()
+
+    await screen_answer(
+        message,
+        f"""
+✅ <b>TON-кошелёк привязан</b>
+
+Сохранено: <code>{mask_ton_wallet(value)}</code>
+
+Карту/номер можно добавить позже в профиле.
+""",
+        reply_markup=payout_continue_keyboard(next_callback),
+        parse_mode="HTML",
+    )
+
+
+@dp.callback_query(F.data == "create_order_payout_gate_disabled")
+async def create_order_payout_gate(call: CallbackQuery, state: FSMContext):
+    if not await require_payout_or_ask(call, "создать заказ", "create_order_continue"):
+        return
+    call.data = "create_order_continue"
+    await create_order_start_v7(call, state)
+
+
+@dp.callback_query(F.data == "create_order_continue")
+async def create_order_start_v7(call: CallbackQuery, state: FSMContext):
+    """Старт создания заказа после проверки реквизитов."""
+    if protect_policy_for_user(call.from_user.id).get("block_create_order"):
+        await show_screen(call, protect_block_text(call.from_user.id, "создание заказа"), reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🛡 Подать апелляцию", callback_data="protect_appeal")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="home")],
+        ]), parse_mode="HTML")
+        await call.answer()
+        return
+
+    await state.set_state(CreateOrder.category)
+    await show_screen(
+        call,
+        """
+📌 <b>Создание заказа</b>
+
+Шаг 1 из 5: выберите категорию.
+
+Совет: чем точнее категория, тем быстрее исполнители найдут ваш заказ.
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            *[[InlineKeyboardButton(text=category, callback_data=f"order_cat:{category}") ] for category in CATEGORIES],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="home")],
+        ]),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@dp.callback_query(F.data.startswith("apply_order:"))
+async def apply_order_payout_gate(call: CallbackQuery, state: FSMContext):
+    order_id = int(call.data.split(":")[1])
+    if not await require_payout_or_ask(call, "откликнуться на заказ", f"apply_order_continue:{order_id}"):
+        return
+    call.data = f"apply_order_continue:{order_id}"
+    await apply_order_start_v7(call, state)
+
+
+@dp.callback_query(F.data.startswith("apply_order_continue:"))
+async def apply_order_start_v7(call: CallbackQuery, state: FSMContext):
+    """Старт отклика после проверки реквизитов."""
+    order_id = int(call.data.split(":")[1])
+
+    if protect_policy_for_user(call.from_user.id).get("block_order_application"):
+        await show_screen(call, protect_block_text(call.from_user.id, "отклик на заказ"), reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🛡 Подать апелляцию", callback_data="protect_appeal")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"order:{order_id}")],
+        ]), parse_mode="HTML")
+        await call.answer()
+        return
+
+    with db() as conn:
+        order = conn.execute("SELECT customer_id, title, budget, status FROM orders WHERE id=?", (order_id,)).fetchone()
+
+    if not order:
+        await call.answer("Заказ не найден", show_alert=True)
+        return
+
+    customer_id, title, budget, status = order
+    if int(customer_id) == int(call.from_user.id):
+        await call.answer("Нельзя откликаться на свой заказ", show_alert=True)
+        return
+
+    if status != "active":
+        await call.answer("Заказ уже не активен", show_alert=True)
+        return
+
+    await state.set_state(OrderResponseState.price)
+    await state.update_data(order_id=order_id)
+
+    await show_screen(
+        call,
+        f"""
+📨 <b>Отклик на заказ</b>
+
+Заказ: <b>{html.escape(title or 'Без названия')}</b>
+Бюджет заказчика: <b>{budget or 0}₽</b>
+
+Шаг 1 из 3: отправьте вашу цену в ₽.
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад к заказу", callback_data=f"order:{order_id}")]
+        ]),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+# Профиль: отдельная кнопка реквизитов.
+@dp.callback_query(F.data == "profile_payouts")
+async def profile_payouts(call: CallbackQuery):
+    await show_screen(
+        call,
+        payout_profile_text(call.from_user.id),
+        reply_markup=payout_profile_keyboard("profile"),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
 # ===== ЗАПУСК =====
 
 import asyncio
 
 async def main():
     if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN не найден. Проверьте .env")
+        raise RuntimeError("BOT_TOKEN не найден. Проверь .env файл")
+
     init_db()
-    await setup_bot_commands()
-    await dp.start_polling(bot)
+    ensure_admin_tables()
+    ensure_profile_tables()
+    ensure_payout_profile_tables()
+    cleanup_protected_punishments()
+
+    print("✅ База данных проверена")
+    print("🚀 Запускаю LTeam Market...")
+
+    try:
+        await setup_bot_commands()
+        if WEBAPP_URL.startswith("https://"):
+            await bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(
+                    text="Открыть LTeam Market",
+                    web_app=WebAppInfo(url=WEBAPP_URL),
+                )
+            )
+        print("✅ Команды бота установлены")
+    except Exception as e:
+        print(f"⚠️ Команды бота не установлены: {e}")
+
+    try:
+        await dp.start_polling(bot)
+    except Exception as e:
+        print(f"❌ Ошибка polling: {e}")
+        raise
+    finally:
+        await bot.session.close()
+
+
+
+# ===== LTEAM ADMIN CENTER V5 ADDONS =====
+
+def table_exists(table_name: str) -> bool:
+    with db() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (table_name,),
+        ).fetchone()
+    return row is not None
+
+
+async def notify_admins_v5(title: str, body: str, level: str = "info", reply_markup=None):
+    """Красивые уведомления staff по уровню важности."""
+    level_map = {
+        "critical": ("🔴", "CRITICAL"),
+        "important": ("🟠", "IMPORTANT"),
+        "info": ("⚪", "INFO"),
+    }
+    emoji, label = level_map.get(level, ("⚪", "INFO"))
+
+    text = f"""
+{emoji} <b>LTeam Admin Notice</b> • <code>{label}</code>
+
+<b>{html.escape(title)}</b>
+
+{body}
+"""
+    targets = OWNER_IDS if level == "critical" else list(dict.fromkeys(OWNER_IDS + ADMIN_IDS))
+    for admin_id in targets:
+        try:
+            await bot.send_message(admin_id, text, parse_mode="HTML", reply_markup=reply_markup)
+        except Exception:
+            pass
+
+
+def revoke_user_plus(user_id: int, actor_id: int) -> None:
+    ensure_profile_tables()
+    with db() as conn:
+        conn.execute("""
+            INSERT INTO user_profile_settings (user_id, plus_until, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET plus_until=excluded.plus_until, updated_at=excluded.updated_at
+        """, (user_id, datetime.now().isoformat(), datetime.now().isoformat()))
+        conn.commit()
+    log_admin_action(actor_id, "revoke_lteam_plus", user_id, "plus revoked")
+
+
+@dp.callback_query(F.data.startswith("admin_grant_plus_days:"))
+async def admin_grant_plus_days(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+
+    _, user_id_raw, days_raw = call.data.split(":")
+    user_id = int(user_id_raw)
+    days = int(days_raw)
+
+    ok, reason = can_act(call.from_user.id, user_id, "grant_plus")
+    if not ok:
+        await call.answer(reason, show_alert=True)
+        return
+
+    until = set_user_plus(user_id, days, actor_id=call.from_user.id)
+
+    try:
+        until_dt = datetime.fromisoformat(until)
+        until_text = until_dt.strftime("%d.%m.%Y %H:%M")
+    except Exception:
+        until_text = str(until)
+
+    try:
+        await bot.send_message(
+            user_id,
+            f"""
+💎 <b>LTeam Plus активирован</b>
+
+Срок: <b>{days} дней</b>
+До: <code>{html.escape(until_text)}</code>
+""",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+
+    await notify_admins_v5(
+        "Выдан LTeam Plus",
+        f"Админ: <code>{call.from_user.id}</code>\nПользователь: <code>{user_id}</code>\nСрок: <b>{days} дней</b>",
+        level="info",
+    )
+
+    await call.answer(f"💎 Plus выдан на {days} дней", show_alert=True)
+    call.data = f"admin_user:{user_id}"
+    await admin_user_profile(call)
+
+
+@dp.callback_query(F.data.startswith("admin_revoke_plus:"))
+async def admin_revoke_plus(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+
+    user_id = int(call.data.split(":")[1])
+    ok, reason = can_act(call.from_user.id, user_id, "revoke_plus")
+    if not ok:
+        await call.answer(reason, show_alert=True)
+        return
+
+    revoke_user_plus(user_id, call.from_user.id)
+
+    try:
+        await bot.send_message(user_id, "💎 Подписка LTeam Plus была снята администрацией.")
+    except Exception:
+        pass
+
+    await call.answer("Plus снят", show_alert=True)
+    call.data = f"admin_user:{user_id}"
+    await admin_user_profile(call)
+
+
+@dp.callback_query(F.data.startswith("admin_unmute_user:"))
+async def admin_unmute_user(call: CallbackQuery):
+    if not is_staff(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+
+    user_id = int(call.data.split(":")[1])
+    ok, reason = can_act(call.from_user.id, user_id, "mute")
+    if not ok:
+        await call.answer(reason, show_alert=True)
+        return
+
+    with db() as conn:
+        conn.execute("DELETE FROM muted_users WHERE user_id=?", (user_id,))
+        conn.commit()
+
+    log_admin_action(call.from_user.id, "unmute_user", user_id, "manual unmute")
+    await call.answer("Мут снят", show_alert=True)
+    call.data = f"admin_user:{user_id}"
+    await admin_user_profile(call)
+
+
+@dp.callback_query(F.data.startswith("admin_user_warnings:"))
+async def admin_user_warnings(call: CallbackQuery):
+    if not is_staff(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+
+    user_id = int(call.data.split(":")[1])
+    with db() as conn:
+        rows = conn.execute("""
+            SELECT id, admin_id, reason, created_at
+            FROM admin_warnings
+            WHERE user_id=?
+            ORDER BY id DESC
+            LIMIT 15
+        """, (user_id,)).fetchall()
+
+    text = f"""
+━━━━━━━━━━━━━━
+⚠️ <b>Предупреждения пользователя</b>
+━━━━━━━━━━━━━━
+
+👤 Пользователь: <code>{user_id}</code>
+
+"""
+    if not rows:
+        text += "Предупреждений нет."
+    else:
+        for wid, admin_id, reason, created_at in rows:
+            text += f"<b>#{wid}</b> от <code>{admin_id}</code> • <code>{html.escape(str(created_at or '')[:16])}</code>\n{html.escape(reason or '—')}\n\n"
+
+    await show_screen(call, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👤 Назад к пользователю", callback_data=f"admin_user:{user_id}")],
+        [InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")],
+    ]), parse_mode="HTML")
+    await call.answer()
+
+
+@dp.callback_query(F.data == "admin_mutes_list_v5")
+async def admin_mutes_list_v5(call: CallbackQuery):
+    if not is_staff(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+
+    now = datetime.now().isoformat()
+    with db() as conn:
+        rows = conn.execute("""
+            SELECT user_id, muted_until, reason, muted_by, created_at
+            FROM muted_users
+            WHERE muted_until>?
+            ORDER BY muted_until DESC
+            LIMIT 15
+        """, (now,)).fetchall()
+
+    text = """
+━━━━━━━━━━━━━━
+🔇 <b>Активные муты</b>
+━━━━━━━━━━━━━━
+
+"""
+    buttons = []
+    if not rows:
+        text += "Активных мутов нет."
+    else:
+        for uid, until, reason, muted_by, created_at in rows:
+            text += f"👤 <code>{uid}</code>\nДо: <code>{html.escape(str(until)[:16])}</code>\nКем: <code>{muted_by}</code>\nПричина: {html.escape(reason or '—')}\n\n"
+            buttons.append([
+                InlineKeyboardButton(text=f"🔊 Снять мут {uid}", callback_data=f"admin_unmute_user:{uid}"),
+                InlineKeyboardButton(text="👤 Профиль", callback_data=f"admin_user:{uid}"),
+            ])
+
+    buttons.append([InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")])
+    await show_screen(call, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+    await call.answer()
+
+
+@dp.callback_query(F.data == "admin_warnings_list_v5")
+async def admin_warnings_list_v5(call: CallbackQuery):
+    if not is_staff(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+
+    with db() as conn:
+        rows = conn.execute("""
+            SELECT user_id, COUNT(*) AS cnt, MAX(created_at)
+            FROM admin_warnings
+            GROUP BY user_id
+            ORDER BY cnt DESC, MAX(created_at) DESC
+            LIMIT 15
+        """).fetchall()
+
+    text = """
+━━━━━━━━━━━━━━
+⚠️ <b>Пользователи с предупреждениями</b>
+━━━━━━━━━━━━━━
+
+"""
+    buttons = []
+    if not rows:
+        text += "Предупреждений нет."
+    else:
+        for uid, cnt, last_at in rows:
+            text += f"👤 <code>{uid}</code> • предупреждений: <b>{cnt}</b> • <code>{html.escape(str(last_at or '')[:16])}</code>\n"
+            buttons.append([
+                InlineKeyboardButton(text=f"⚠️ История {uid}", callback_data=f"admin_user_warnings:{uid}"),
+                InlineKeyboardButton(text="👤 Профиль", callback_data=f"admin_user:{uid}"),
+            ])
+
+    buttons.append([InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")])
+    await show_screen(call, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+    await call.answer()
+
+
+@dp.callback_query(F.data == "admin_plus_center_v5")
+async def admin_plus_center_v5(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+
+    now = datetime.now().isoformat()
+    with db() as conn:
+        rows = conn.execute("""
+            SELECT user_id, plus_until
+            FROM user_profile_settings
+            WHERE plus_until>?
+            ORDER BY plus_until DESC
+            LIMIT 15
+        """, (now,)).fetchall() if table_exists("user_profile_settings") else []
+
+    text = """
+━━━━━━━━━━━━━━
+💎 <b>LTeam Plus Center</b>
+━━━━━━━━━━━━━━
+
+Что можно:
+• выдать Plus из карточки пользователя;
+• снять Plus;
+• посмотреть активные подписки;
+• найти пользователя по ID/@username.
+
+"""
+    buttons = [[InlineKeyboardButton(text="🔎 Найти пользователя", callback_data="admin_find_user")]]
+
+    if not rows:
+        text += "\nАктивных Plus-подписок пока нет."
+    else:
+        text += "\n<b>Активные Plus:</b>\n"
+        for uid, until in rows:
+            text += f"• <code>{uid}</code> до <code>{html.escape(str(until)[:16])}</code>\n"
+            buttons.append([
+                InlineKeyboardButton(text=f"👤 {uid}", callback_data=f"admin_user:{uid}"),
+                InlineKeyboardButton(text="🧹 Снять", callback_data=f"admin_revoke_plus:{uid}"),
+            ])
+
+    buttons.append([InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")])
+    await show_screen(call, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+    await call.answer()
+
+
+@dp.callback_query(F.data == "admin_verified_list_v5")
+async def admin_verified_list_v5(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+
+    with db() as conn:
+        rows = conn.execute("""
+            SELECT user_id, COALESCE(username,''), COALESCE(display_name,'')
+            FROM users
+            WHERE COALESCE(verified,0)=1
+            ORDER BY user_id DESC
+            LIMIT 20
+        """).fetchall()
+
+    text = """
+━━━━━━━━━━━━━━
+✅ <b>Verified пользователи</b>
+━━━━━━━━━━━━━━
+
+"""
+    buttons = [[InlineKeyboardButton(text="🔎 Найти пользователя", callback_data="admin_find_user")]]
+
+    if not rows:
+        text += "Verified пользователей пока нет."
+    else:
+        for uid, username, display_name in rows:
+            name = display_name or (f"@{username}" if username else str(uid))
+            text += f"• <code>{uid}</code> — {html.escape(name)}\n"
+            buttons.append([
+                InlineKeyboardButton(text=f"👤 {uid}", callback_data=f"admin_user:{uid}"),
+                InlineKeyboardButton(text="❌ Снять", callback_data=f"admin_unverify_user:{uid}"),
+            ])
+
+    buttons.append([InlineKeyboardButton(text="⬅️ Админ-панель", callback_data="admin_panel")])
+    await show_screen(call, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+    await call.answer()
+
+
+@dp.callback_query(F.data.startswith("admin_bulk_plus:"))
+async def admin_bulk_plus_v5(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+
+    # Формат: admin_bulk_plus:123,456,789:30
+    parts = call.data.split(":")
+    if len(parts) < 3:
+        await call.answer("Неверный формат bulk Plus", show_alert=True)
+        return
+
+    user_ids = [int(u) for u in parts[1].split(",") if u.strip().isdigit()]
+    days = int(parts[2])
+    success = 0
+    skipped = 0
+
+    for uid in user_ids:
+        ok, _ = can_act(call.from_user.id, uid, "grant_plus")
+        if not ok:
+            skipped += 1
+            continue
+        set_user_plus(uid, days, actor_id=call.from_user.id)
+        success += 1
+
+    log_admin_action(call.from_user.id, "bulk_grant_plus", None, f"days={days}; success={success}; skipped={skipped}; ids={user_ids[:20]}")
+    await call.answer(f"Plus: {success} выдано, {skipped} пропущено", show_alert=True)
+
+
+@dp.callback_query(F.data.startswith("admin_bulk_mute:"))
+async def admin_bulk_mute_v5(call: CallbackQuery):
+    if not is_staff(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+
+    # Формат: admin_bulk_mute:123,456,789:10
+    parts = call.data.split(":")
+    if len(parts) < 3:
+        await call.answer("Неверный формат bulk mute", show_alert=True)
+        return
+
+    user_ids = [int(u) for u in parts[1].split(",") if u.strip().isdigit()]
+    minutes = int(parts[2])
+    success = 0
+    skipped = 0
+
+    for uid in user_ids:
+        if set_mute(uid, minutes, "Bulk mute by admin", muted_by=call.from_user.id):
+            success += 1
+        else:
+            skipped += 1
+
+    log_admin_action(call.from_user.id, "bulk_mute", None, f"minutes={minutes}; success={success}; skipped={skipped}; ids={user_ids[:20]}")
+    await call.answer(f"Мут: {success} выдано, {skipped} пропущено", show_alert=True)
+
+
+@dp.callback_query(F.data.startswith("admin_bulk_warn:"))
+async def admin_bulk_warn_v5(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+
+    # Формат: admin_bulk_warn:123,456,789
+    parts = call.data.split(":")
+    user_ids = [int(u) for u in parts[1].split(",") if u.strip().isdigit()]
+    reason = "Массовое предупреждение администрации LTeam"
+    success = 0
+    skipped = 0
+
+    for uid in user_ids:
+        ok, _ = can_act(call.from_user.id, uid, "warn")
+        if not ok:
+            skipped += 1
+            continue
+        with db() as conn:
+            conn.execute("""
+                INSERT INTO admin_warnings(user_id, admin_id, reason, created_at)
+                VALUES (?, ?, ?, ?)
+            """, (uid, call.from_user.id, reason, datetime.now().isoformat()))
+            conn.commit()
+        log_admin_action(call.from_user.id, "warn_user", uid, reason)
+        success += 1
+
+    await call.answer(f"Варн: {success} выдано, {skipped} пропущено", show_alert=True)
+
+
+# ===== ЗАПУСК =====
+
+import asyncio
+
+async def main():
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN не найден. Проверь .env файл")
+
+    init_db()
+    ensure_admin_tables()
+    ensure_profile_tables()
+    ensure_payout_profile_tables()
+    cleanup_protected_punishments()
+
+    print("✅ База данных проверена")
+    print("🚀 Запускаю LTeam Market...")
+
+    try:
+        await setup_bot_commands()
+        print("✅ Команды бота установлены")
+    except Exception as e:
+        print(f"⚠️ Команды бота не установлены: {e}")
+
+    try:
+        await dp.start_polling(bot)
+    except Exception as e:
+        print(f"❌ Ошибка polling: {e}")
+        raise
+    finally:
+        await bot.session.close()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-

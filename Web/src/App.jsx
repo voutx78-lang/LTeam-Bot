@@ -7,6 +7,7 @@ import "./Experience.css";
 import "./Status.css";
 import "./Chat.css";
 import "./Brand.css";
+import "./Home.css";
 
 const tg = window.Telegram?.WebApp;
 const API_BASE = import.meta.env.VITE_API_URL || "https://lteam-botminiapp.onrender.com";
@@ -120,6 +121,15 @@ function WorkspaceCard({ profile, dealsCount, onNavigate }) {
   </section>
 }
 
+function HomeScreen({ profile, dealsCount, onNavigate }) {
+  return <section className="home-screen">
+    <div className="home-hero"><div className="home-grid" /><div className="home-signal"><span /><span /><span /></div><p className="eyebrow">LTEAM MARKET · БЕЗОПАСНЫЕ СДЕЛКИ</p><h1>Работа в Telegram,<br /><em>как на полноценной платформе.</em></h1><p>Находите исполнителей, публикуйте задачи и ведите сделки через гаранта LTeam.</p><div className="home-hero-actions"><button className="primary" onClick={() => onNavigate("catalog")}>Найти исполнителя <span>→</span></button><button className="secondary-action" onClick={() => onNavigate("create-order")}>Создать заказ</button></div></div>
+    <div className="focus-card"><div><p className="eyebrow">ВАШ ЦЕНТР УПРАВЛЕНИЯ</p><h2>{dealsCount ? `Активных сделок: ${dealsCount}` : `Добро пожаловать, ${profile.name || "пользователь"}`}</h2><span>{dealsCount ? "Откройте сделки, чтобы проверить статусы и переписку." : "Начните с каталога или опубликуйте первую задачу."}</span></div><button onClick={() => onNavigate(dealsCount ? "orders" : "catalog")} aria-label="Открыть">→</button></div>
+    <section className="how-it-works"><div className="section-heading"><div><p className="eyebrow">КАК ЭТО РАБОТАЕТ</p><h2>Три шага до результата</h2></div></div><div className="guide-steps"><article><b>01</b><div><h3>Выберите</h3><p>Услугу из каталога или создайте свой заказ.</p></div></article><article><b>02</b><div><h3>Обсудите</h3><p>Все условия и сообщения хранятся внутри сделки.</p></div></article><article><b>03</b><div><h3>Подтвердите</h3><p>Гарант помогает провести оплату безопасно.</p></div></article></div></section>
+    <button className="guide-link" onClick={() => sendToBot("open_guarantee")}><span className="guide-mark">?</span><span><b>Короткий гид по гаранту</b><small>Понятно о сделках, оплате и защите</small></span><i>→</i></button>
+  </section>
+}
+
 function OrderCard({ order, onOpen }) {
   const budget = Number(order.budget || 0).toLocaleString("ru-RU");
   return <article className="order-card" onClick={() => onOpen(order)}><div className="order-card-top"><span className="order-icon">◈</span><span className="status working">{order.status || "active"}</span></div><p className="eyebrow">{order.category || "Заказ"}</p><h3>{order.title}</h3><p className="order-description">{order.description || "Описание заказа"}</p><div className="order-card-bottom"><b>до {budget} ₽</b><span>Открыть чат ›</span></div></article>
@@ -226,13 +236,13 @@ export default function App() {
 
   return <main className="app-shell">
     <header className="topbar"><button className="brand" onClick={() => setTab("home")}><span className="brand-mark"><i>L</i><i>T</i></span><span className="brand-copy"><strong>LTEAM</strong><b>MARKET</b></span></button><span className="secure-pill"><Icon name="shield" /> Гарант</span><button className="round-button notification-button" onClick={() => sendToBot("open_notifications")} aria-label="Уведомления"><Icon name="bell" /><i /></button></header>
-    {tab === "home" && <>
+    {tab === "home" && <><HomeScreen profile={profile} dealsCount={dealItems.length} onNavigate={setTab} /><div className="legacy-home">
       <section className="hero-card"><div className="hero-orb one" /><div className="hero-orb two" /><p className="eyebrow">Безопасные сделки в Telegram</p><h1>Находите исполнителей.<br /><em>Работайте спокойно.</em></h1><p className="hero-copy">Оплата проходит через гаранта LTeam, а деньги исполнитель получает после вашего подтверждения.</p><div className="hero-buttons"><button className="primary" onClick={() => setTab("catalog")}>Смотреть каталог <Icon name="arrow" /></button><button className="ghost" onClick={() => setTab("create")}><Icon name="plus" /> Разместить</button></div></section>
       <section className="trust-row"><div><Icon name="shield" /><span><b>Гарант-сделки</b><small>Оплата через администратора</small></span></div><div><Icon name="check" /><span><b>Проверенные отзывы</b><small>Только после заказа</small></span></div></section>
       <section><div className="section-heading"><div><p className="eyebrow">Популярное</p><h2>Услуги для старта</h2></div><button className="text-button" onClick={() => setTab("catalog")}>Все <Icon name="arrow" /></button></div><div className="listing-grid">{catalogListings.slice(0, 2).map((item) => <ListingCard key={item.id} item={item} onOpen={(listing_id) => sendToBot("open_listing", { listing_id })} />)}</div></section>
       <WorkspaceCard profile={profile} dealsCount={dealItems.length} onNavigate={setTab} />
       <section className="quick-grid"><button onClick={() => { setTab("orders"); sendToBot("open_orders"); }}><span className="quick-icon purple">⌁</span><b>Найти исполнителя</b><small>Создать заказ</small></button><button onClick={() => sendToBot("open_guarantee")}><span className="quick-icon mint">✦</span><b>Как работает гарант</b><small>6 простых шагов</small></button></section>
-    </>}
+    </div></>}
 
     {tab === "catalog" && <section><div className="page-title"><div><p className="eyebrow">Маркетплейс</p><h1>Каталог услуг</h1></div><button className="round-button" onClick={() => setQuery("")}><Icon name="filter" /></button></div><label className="search-box"><Icon name="search" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Что вы ищете?" /></label><div className="chips">{["Все", "Дизайн", "Разработка", "Тексты", "Монтаж"].map((category) => <button className={activeCategory === category ? "selected" : ""} onClick={() => setActiveCategory(category)} key={category}>{category}</button>)}</div>{listings.length ? <div className="listing-grid">{listings.map((item) => <ListingCard key={item.id} item={item} favorite={favorites.includes(item.id)} onFavorite={toggleFavorite} onOpen={(listing_id) => sendToBot("open_listing", { listing_id })} />)}</div> : <div className="empty-note"><Icon name="search" /><div><b>Ничего не найдено</b><span>Попробуйте изменить запрос или выберите другую категорию.</span></div></div>}</section>}
 

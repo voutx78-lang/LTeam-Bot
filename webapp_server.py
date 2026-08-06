@@ -18,6 +18,14 @@ ADMIN_IDS = {int(value.strip()) for value in os.getenv("ADMIN_IDS", "").split(",
 app = Flask(__name__, static_folder=str(BASE_DIR / "Web" / "dist"), static_url_path="")
 
 
+@app.after_request
+def add_cors_headers(response):
+    """Разрешает опубликованной MiniApp обращаться к отдельному API-сервису."""
+    response.headers["Access-Control-Allow-Origin"] = os.getenv("WEBAPP_ORIGIN", "*")
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Telegram-Init-Data"
+    return response
+
+
 def get_user() -> dict:
     """Проверяет подпись Telegram initData, не доверяя данным, пришедшим от браузера."""
     init_data = request.headers.get("X-Telegram-Init-Data", "")
@@ -42,6 +50,18 @@ def db() -> sqlite3.Connection:
     return connection
 
 
+def current_user_id() -> int | None:
+    user = get_user()
+    return int(user["id"]) if user.get("id") else None
+
+
+def require_user() -> int:
+    user_id = current_user_id()
+    if not user_id:
+        raise PermissionError
+    return user_id
+
+
 @app.get("/api/me")
 def me():
     user = get_user()
@@ -52,11 +72,44 @@ def me():
 
 @app.get("/api/listings")
 def listings():
-    if not get_user():
+    if not current_user_id():
         return jsonify({"error": "unauthorized"}), 401
     with db() as connection:
-        rows = connection.execute("SELECT id, title, category, price, COALESCE(description, '') AS description, COALESCE(user_id, 0) AS seller_id FROM listings WHERE status='active' ORDER BY id DESC LIMIT 50").fetchall()
+        rows = connection.execute("SELECT id, title, category, price, COALESCE(description, '') AS description, seller_id, COALESCE(delivery_time, '') AS delivery_time FROM listings WHERE status='active' ORDER BY COALESCE(is_top,0) DESC, id DESC LIMIT 50").fetchall()
     return jsonify([dict(row) for row in rows])
+
+
+@app.get("/api/orders")
+def orders():
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    with db() as connection:
+        rows = connection.execute("SELECT id, title, category, budget, COALESCE(description, '') AS description, status, deadline, created_at FROM orders WHERE status IN ('active','open','approved') OR customer_id=? ORDER BY id DESC LIMIT 50", (user_id,)).fetchall()
+    return jsonify([dict(row) for row in rows])
+
+
+@app.get("/api/deals")
+def deals():
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    with db() as connection:
+        rows = connection.execute("""SELECT d.id, d.buyer_id, d.seller_id, d.amount, d.commission, d.payout, d.status, d.created_at,
+            COALESCE(l.title, o.title, 'LTeam deal') AS title
+            FROM deals d LEFT JOIN listings l ON l.id=d.listing_id LEFT JOIN orders o ON o.id=d.order_id
+            WHERE d.buyer_id=? OR d.seller_id=? ORDER BY d.id DESC LIMIT 50""", (user_id, user_id)).fetchall()
+    return jsonify([dict(row) for row in rows])
+
+
+@app.get("/api/balance")
+def balance():
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    with db() as connection:
+        row = connection.execute("SELECT COALESCE(available, balance, 0) AS available, COALESCE(frozen, 0) AS frozen, COALESCE(total_earned, 0) AS total_earned, COALESCE(total_withdrawn, 0) AS total_withdrawn FROM user_balances WHERE user_id=?", (user_id,)).fetchone()
+    return jsonify(dict(row) if row else {"available": 0, "frozen": 0, "total_earned": 0, "total_withdrawn": 0})
 
 
 @app.get("/api/admin/summary")
@@ -66,7 +119,7 @@ def admin_summary():
     with db() as connection:
         payments = connection.execute("SELECT COUNT(*) FROM deals WHERE status='waiting_admin_confirm'").fetchone()[0]
         disputes = connection.execute("SELECT COUNT(*) FROM deals WHERE status='dispute_open'").fetchone()[0]
-        payouts = connection.execute("SELECT COUNT(*) FROM withdrawals WHERE status='pending'").fetchone()[0]
+        payouts = connection.execute("SELECT COUNT(*) FROM withdrawal_requests WHERE status='pending'").fetchone()[0]
     return jsonify({"payments": payments, "disputes": disputes, "payouts": payouts})
 
 

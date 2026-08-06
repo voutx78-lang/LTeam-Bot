@@ -9,18 +9,24 @@ import "./Status.css";
 const tg = window.Telegram?.WebApp;
 const API_BASE = import.meta.env.VITE_API_URL || "https://lteam-botminiapp.onrender.com";
 
+function telegramApp() {
+  return window.Telegram?.WebApp;
+}
+
 async function apiFetch(path) {
+  const initData = telegramApp()?.initData || "";
   const response = await fetch(`${API_BASE}${path}`, {
-    headers: tg?.initData ? { "X-Telegram-Init-Data": tg.initData } : {},
+    headers: initData ? { "X-Telegram-Init-Data": initData } : {},
   });
   if (!response.ok) throw new Error(`API ${response.status}`);
   return response.json();
 }
 
 async function apiRequest(path, method, body) {
+  const initData = telegramApp()?.initData || "";
   const response = await fetch(`${API_BASE}${path}`, {
     method,
-    headers: { "Content-Type": "application/json", ...(tg?.initData ? { "X-Telegram-Init-Data": tg.initData } : {}) },
+    headers: { "Content-Type": "application/json", ...(initData ? { "X-Telegram-Init-Data": initData } : {}) },
     body: JSON.stringify(body),
   });
   const data = await response.json();
@@ -38,7 +44,7 @@ const dealStages = ["Цена", "Оплата", "Работа", "Проверк�
 
 function sendToBot(action, data = {}) {
   const payload = { action, ...data };
-  if (tg?.sendData) tg.sendData(JSON.stringify(payload));
+  if (telegramApp()?.sendData) telegramApp().sendData(JSON.stringify(payload));
   else console.info("MiniApp action", payload);
 }
 
@@ -131,10 +137,15 @@ export default function App() {
   const [profile, setProfile] = useState({ name: tg?.initDataUnsafe?.user?.first_name || "Гость", username: tg?.initDataUnsafe?.user?.username ? `@${tg.initDataUnsafe.user.username}` : "LTeam user" });
 
   useEffect(() => {
-    tg?.ready();
-    tg?.expand();
-    tg?.setHeaderColor?.("#f7f8fc");
-    tg?.setBackgroundColor?.("#f7f8fc");
+    const telegram = telegramApp();
+    telegram?.ready();
+    telegram?.expand();
+    telegram?.setHeaderColor?.("#f7f8fc");
+    telegram?.setBackgroundColor?.("#f7f8fc");
+    const telegramUser = telegram?.initDataUnsafe?.user;
+    if (telegramUser) {
+      setProfile({ name: [telegramUser.first_name, telegramUser.last_name].filter(Boolean).join(" ") || "Пользователь", username: telegramUser.username ? `@${telegramUser.username}` : "LTeam user" });
+    }
 
     // Роль приходит только с защищённого API. Клиент не имеет права сам выдавать доступ.
     apiFetch("/api/me")
@@ -154,8 +165,8 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("lteam-theme", theme);
-    tg?.setHeaderColor?.(theme === "dark" || theme === "midnight" ? "#151525" : "#f7f8fc");
-    tg?.setBackgroundColor?.(theme === "dark" || theme === "midnight" ? "#151525" : "#f7f8fc");
+    telegramApp()?.setHeaderColor?.(theme === "dark" || theme === "midnight" ? "#151525" : "#f7f8fc");
+    telegramApp()?.setBackgroundColor?.(theme === "dark" || theme === "midnight" ? "#151525" : "#f7f8fc");
   }, [theme]);
 
   useEffect(() => {

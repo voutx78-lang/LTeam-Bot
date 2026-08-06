@@ -49,6 +49,7 @@ def init_db():
             "ALTER TABLE listings ADD COLUMN highlight_until TEXT",
             "ALTER TABLE listings ADD COLUMN seller_requisites TEXT",
             "ALTER TABLE listings ADD COLUMN delivery_time TEXT",
+            "ALTER TABLE listings ADD COLUMN image_data TEXT",
         ]:
             try:
                 cur.execute(column_sql)
@@ -345,5 +346,4 @@ def init_db():
         """)
 
         conn.commit()
-
 

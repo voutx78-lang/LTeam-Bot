@@ -287,6 +287,20 @@ def balance():
     return jsonify(dict(row) if row else {"available": 0, "frozen": 0, "total_earned": 0, "total_withdrawn": 0})
 
 
+@app.get("/api/users/<int:user_id>/public")
+def public_profile(user_id: int):
+    """Public marketplace profile: no private contacts or payment data."""
+    if not current_user_id():
+        return jsonify({"error": "unauthorized"}), 401
+    with db() as connection:
+        user = connection.execute("SELECT COALESCE(username, '') AS username, COALESCE(display_name, '') AS display_name, COALESCE(verified, 0) AS verified FROM users WHERE user_id=?", (user_id,)).fetchone()
+        stats = connection.execute("SELECT COALESCE(AVG(rating), 0) AS rating, COUNT(*) AS reviews_count FROM reviews WHERE seller_id=?", (user_id,)).fetchone()
+        listings = connection.execute("SELECT id, title, category, price, COALESCE(delivery_time, '') AS delivery_time, COALESCE(image_data, '') AS image_data FROM listings WHERE seller_id=? AND status='active' ORDER BY id DESC LIMIT 30", (user_id,)).fetchall()
+    if not user:
+        return jsonify({"error": "not_found"}), 404
+    return jsonify({"id": user_id, **dict(user), **dict(stats), "listings": [dict(row) for row in listings]})
+
+
 @app.get("/api/admin/summary")
 def admin_summary():
     if int(get_user().get("id", 0)) not in ADMIN_IDS:

@@ -13123,7 +13123,7 @@ async def main():
         if WEBAPP_URL.startswith("https://"):
             await bot.set_chat_menu_button(
                 menu_button=MenuButtonWebApp(
-                    text="Открыть LTeam Market",
+                    text="Open LTeam Market",
                     web_app=WebAppInfo(url=WEBAPP_URL),
                 )
             )

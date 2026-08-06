@@ -10,6 +10,7 @@ from urllib.parse import parse_qsl
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request, send_from_directory
+from datetime import datetime
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
@@ -77,6 +78,31 @@ def listings():
     with db() as connection:
         rows = connection.execute("SELECT id, title, category, price, COALESCE(description, '') AS description, seller_id, COALESCE(delivery_time, '') AS delivery_time FROM listings WHERE status='active' ORDER BY COALESCE(is_top,0) DESC, id DESC LIMIT 50").fetchall()
     return jsonify([dict(row) for row in rows])
+
+
+@app.post("/api/listings")
+def create_listing():
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    payload = request.get_json(silent=True) or {}
+    title = str(payload.get("title", "")).strip()[:120]
+    category = str(payload.get("category", "Другое")).strip()[:80]
+    description = str(payload.get("description", "")).strip()[:2000]
+    try:
+        price = max(1, int(payload.get("price", 0)))
+    except (TypeError, ValueError):
+        price = 0
+    if not title or not description or not price:
+        return jsonify({"error": "validation", "message": "Заполните название, описание и цену."}), 400
+    with db() as connection:
+        cursor = connection.execute(
+            """INSERT INTO listings (seller_id, title, category, item_type, condition, price, description, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, title, category, "Услуга", "new", price, description, "pending", datetime.now().isoformat()),
+        )
+        connection.commit()
+    return jsonify({"ok": True, "listing_id": cursor.lastrowid, "status": "pending"}), 201
 
 
 @app.get("/api/orders")

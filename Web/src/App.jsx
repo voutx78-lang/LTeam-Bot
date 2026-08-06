@@ -12,6 +12,8 @@ import "./HomeRefine.css";
 import "./Guide.css";
 import "./Catalog.css";
 import "./CatalogPlatform.css";
+import "./CatalogV3.css";
+import CatalogV3 from "./CatalogV3";
 
 const tg = window.Telegram?.WebApp;
 const API_BASE = import.meta.env.VITE_API_URL || "https://lteam-botminiapp.onrender.com";
@@ -290,7 +292,7 @@ export default function App() {
 
     {tab === "create" && <section><div className="page-title"><div><p className="eyebrow">Новая услуга</p><h1>Разместить объявление</h1></div></div><form className="listing-form" onSubmit={async (event) => { event.preventDefault(); setFormMessage(""); try { await apiRequest("/api/listings", "POST", listingForm); setFormMessage("Объявление отправлено на проверку."); setListingForm({ title: "", category: "Дизайн", price: "", description: "" }); } catch (error) { setFormMessage(error.message); } }}><label>Название<input required value={listingForm.title} onChange={(event) => setListingForm({ ...listingForm, title: event.target.value })} placeholder="Например, дизайн Telegram-канала" /></label><label>Категория<select value={listingForm.category} onChange={(event) => setListingForm({ ...listingForm, category: event.target.value })}><option>Дизайн</option><option>Разработка</option><option>Тексты</option><option>Монтаж</option><option>Другое</option></select></label><label>Цена, ₽<input required inputMode="numeric" value={listingForm.price} onChange={(event) => setListingForm({ ...listingForm, price: event.target.value })} placeholder="1500" /></label><label>Описание<textarea required value={listingForm.description} onChange={(event) => setListingForm({ ...listingForm, description: event.target.value })} placeholder="Расскажите, что получит покупатель" /></label><button className="primary" type="submit">Отправить на проверку <Icon name="arrow" /></button>{formMessage && <p className="form-message">{formMessage}</p>}</form></section>}
 
-    {tab === "catalog" && <CatalogPlatform items={catalogListings} orders={orderItems} favorites={favorites} onFavorite={toggleFavorite} onNavigate={setTab} />}
+    {tab === "catalog" && <CatalogV3 items={catalogListings} orders={orderItems} favorites={favorites} onFavorite={toggleFavorite} onNavigate={setTab} request={apiRequest} />}
     <nav className="bottom-nav">{navItems.map(([id, icon, label]) => <button className={tab === id ? "active" : ""} key={id} onClick={() => setTab(id)}><Icon name={icon} /><span>{label}</span></button>)}</nav>
     {settingsOpen && <SettingsSheet theme={theme} setTheme={setTheme} onClose={() => setSettingsOpen(false)} />}
     {toast && <div className="toast"><span>✓</span>{toast}</div>}

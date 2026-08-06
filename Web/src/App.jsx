@@ -3,7 +3,7 @@ import "./App.css";
 import "./Form.css";
 
 const tg = window.Telegram?.WebApp;
-const API_BASE = import.meta.env.VITE_API_URL || "";
+const API_BASE = import.meta.env.VITE_API_URL || "https://lteam-botminiapp.onrender.com";
 
 async function apiFetch(path) {
   const response = await fetch(`${API_BASE}${path}`, {

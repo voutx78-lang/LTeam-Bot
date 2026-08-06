@@ -8536,6 +8536,7 @@ async def admin_user_logs(call: CallbackQuery):
                 f"Действие: <b>{html.escape(action or '—')}</b>\n"
                 f"Детали: {html.escape((details or '—')[:300])}"
             )
+        log_items_text = "\n\n".join(items)
         text = f"""
 ━━━━━━━━━━━━━━
 📜 <b>Админ-логи пользователя</b>
@@ -8543,7 +8544,7 @@ async def admin_user_logs(call: CallbackQuery):
 
 Пользователь: <code>{user_id}</code>
 
-{"\n\n".join(items)}
+{log_items_text}
 """
 
     await show_screen(call,

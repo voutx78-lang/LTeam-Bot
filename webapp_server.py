@@ -76,7 +76,11 @@ def listings():
     if not current_user_id():
         return jsonify({"error": "unauthorized"}), 401
     with db() as connection:
-        rows = connection.execute("SELECT id, title, category, price, COALESCE(description, '') AS description, seller_id, COALESCE(delivery_time, '') AS delivery_time FROM listings WHERE status='active' ORDER BY COALESCE(is_top,0) DESC, id DESC LIMIT 50").fetchall()
+        rows = connection.execute("""SELECT l.id, l.title, l.category, l.price, COALESCE(l.description, '') AS description,
+            l.seller_id, COALESCE(l.delivery_time, '') AS delivery_time, COALESCE(u.username, '') AS seller_username,
+            COALESCE(u.display_name, '') AS seller_name, COALESCE(l.image_data, '') AS image_data
+            FROM listings l LEFT JOIN users u ON u.user_id=l.seller_id
+            WHERE l.status='active' ORDER BY COALESCE(l.is_top,0) DESC, l.id DESC LIMIT 50""").fetchall()
     return jsonify([dict(row) for row in rows])
 
 
@@ -111,7 +115,10 @@ def orders():
     if not user_id:
         return jsonify({"error": "unauthorized"}), 401
     with db() as connection:
-        rows = connection.execute("SELECT id, title, category, budget, COALESCE(description, '') AS description, status, deadline, created_at FROM orders WHERE status IN ('active','open','approved') OR customer_id=? ORDER BY id DESC LIMIT 50", (user_id,)).fetchall()
+        rows = connection.execute("""SELECT o.id, o.customer_id, o.title, o.category, o.budget, COALESCE(o.description, '') AS description,
+            o.status, o.deadline, o.created_at, COALESCE(u.username, '') AS customer_username, COALESCE(u.display_name, '') AS customer_name
+            FROM orders o LEFT JOIN users u ON u.user_id=o.customer_id
+            WHERE o.status IN ('active','open','approved') OR o.customer_id=? ORDER BY o.id DESC LIMIT 50""", (user_id,)).fetchall()
     return jsonify([dict(row) for row in rows])
 
 

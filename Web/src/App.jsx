@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import "./Form.css";
 import "./Polish.css";
+import "./Interactions.css";
 
 const tg = window.Telegram?.WebApp;
 const API_BASE = import.meta.env.VITE_API_URL || "https://lteam-botminiapp.onrender.com";
@@ -175,7 +176,7 @@ export default function App() {
       <section className="quick-grid"><button onClick={() => { setTab("orders"); sendToBot("open_orders"); }}><span className="quick-icon purple">⌁</span><b>Найти исполнителя</b><small>Создать заказ</small></button><button onClick={() => sendToBot("open_guarantee")}><span className="quick-icon mint">✦</span><b>Как работает гарант</b><small>6 простых шагов</small></button></section>
     </>}
 
-    {tab === "catalog" && <section><div className="page-title"><div><p className="eyebrow">Маркетплейс</p><h1>Каталог услуг</h1></div><button className="round-button"><Icon name="filter" /></button></div><label className="search-box"><Icon name="search" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Что вы ищете?" /></label><div className="chips"><button className="selected">Все</button><button>Дизайн</button><button>Разработка</button><button>Тексты</button></div><div className="listing-grid">{listings.map((item) => <ListingCard key={item.id} item={item} onOpen={(listing_id) => sendToBot("open_listing", { listing_id })} />)}</div></section>}
+    {tab === "catalog" && <section><div className="page-title"><div><p className="eyebrow">Маркетплейс</p><h1>Каталог услуг</h1></div><button className="round-button" onClick={() => setQuery("")}><Icon name="filter" /></button></div><label className="search-box"><Icon name="search" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Что вы ищете?" /></label><div className="chips">{["Все", "Дизайн", "Разработка", "Тексты", "Монтаж"].map((category) => <button className={activeCategory === category ? "selected" : ""} onClick={() => setActiveCategory(category)} key={category}>{category}</button>)}</div>{listings.length ? <div className="listing-grid">{listings.map((item) => <ListingCard key={item.id} item={item} favorite={favorites.includes(item.id)} onFavorite={toggleFavorite} onOpen={(listing_id) => sendToBot("open_listing", { listing_id })} />)}</div> : <div className="empty-note"><Icon name="search" /><div><b>Ничего не найдено</b><span>Попробуйте изменить запрос или выберите другую категорию.</span></div></div>}</section>}
 
     {tab === "orders" && <section><div className="page-title"><div><p className="eyebrow">Ваши задачи</p><h1>Заказы и сделки</h1></div><button className="round-button" onClick={() => sendToBot("create_order")}><Icon name="plus" /></button></div><button className="create-order" onClick={() => sendToBot("create_order")}><span><Icon name="plus" /></span><div><b>Создать заказ</b><small>Исполнители откликнутся сами</small></div><Icon name="arrow" /></button>{dealItems.length ? dealItems.map((deal) => <DealCard key={deal.id} deal={deal} />) : <div className="empty-note"><Icon name="chat" /><div><b>Сделок пока нет</b><span>Создайте заказ или выберите услугу в каталоге.</span></div></div>}<div className="empty-note"><Icon name="chat" /><div><b>Все обсуждения внутри сделки</b><span>Так гарант сможет помочь при споре.</span></div></div></section>}
 

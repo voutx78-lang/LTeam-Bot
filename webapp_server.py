@@ -79,7 +79,9 @@ def listings():
         rows = connection.execute("""SELECT l.id, l.title, l.category, l.price, COALESCE(l.description, '') AS description,
             l.seller_id, COALESCE(l.delivery_time, '') AS delivery_time, COALESCE(u.username, '') AS seller_username,
             COALESCE(u.display_name, '') AS seller_name, COALESCE(l.image_data, '') AS image_data
+            , COALESCE(r.avg_rating, 0) AS avg_rating, COALESCE(r.reviews_count, 0) AS reviews_count
             FROM listings l LEFT JOIN users u ON u.user_id=l.seller_id
+            LEFT JOIN (SELECT seller_id, AVG(rating) AS avg_rating, COUNT(*) AS reviews_count FROM reviews GROUP BY seller_id) r ON r.seller_id=l.seller_id
             WHERE l.status='active' ORDER BY COALESCE(l.is_top,0) DESC, l.id DESC LIMIT 50""").fetchall()
     return jsonify([dict(row) for row in rows])
 

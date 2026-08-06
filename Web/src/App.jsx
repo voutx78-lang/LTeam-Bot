@@ -71,10 +71,10 @@ function DealCard({ deal }) {
   </article>
 }
 
-function AdminPanel() {
+function AdminPanel({ summary = {} }) {
   return <section className="admin-panel">
     <div className="section-heading"><div><p className="eyebrow">Управление</p><h2>Админ-панель</h2></div><span className="admin-badge">ADMIN</span></div>
-    <div className="admin-stats"><div><span>На проверке</span><b>12</b></div><div><span>Споры</span><b>3</b></div><div><span>Выплаты</span><b>7</b></div></div>
+    <div className="admin-stats"><div><span>На проверке</span><b>{summary.payments ?? 0}</b></div><div><span>Споры</span><b>{summary.disputes ?? 0}</b></div><div><span>Выплаты</span><b>{summary.payouts ?? 0}</b></div></div>
     <div className="admin-actions">
       <button onClick={() => sendToBot("admin_open", { section: "payments" })}><Icon name="wallet" /><span>Проверить чеки</span><Icon name="arrow" /></button>
       <button onClick={() => sendToBot("admin_open", { section: "disputes" })}><Icon name="shield" /><span>Открытые споры</span><Icon name="arrow" /></button>
@@ -122,6 +122,7 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [catalogListings, setCatalogListings] = useState([]);
   const [dealItems, setDealItems] = useState([]);
+  const [adminSummary, setAdminSummary] = useState({});
   const [balance, setBalance] = useState({ available: 0, frozen: 0 });
   const [listingForm, setListingForm] = useState({ title: "", category: "Дизайн", price: "", description: "" });
   const [formMessage, setFormMessage] = useState("");
@@ -144,6 +145,7 @@ export default function App() {
     apiFetch("/api/listings").then((items) => setCatalogListings(items.map((item) => ({ ...item, seller: "Исполнитель LTeam", rating: "—", orders: 0, accent: "bot" })))).catch(() => setCatalogListings([]));
     apiFetch("/api/deals").then(setDealItems).catch(() => setDealItems([]));
     apiFetch("/api/balance").then(setBalance).catch(() => {});
+    apiFetch("/api/admin/summary").then(setAdminSummary).catch(() => setAdminSummary({}));
   }, []);
 
   useEffect(() => {
@@ -194,7 +196,7 @@ export default function App() {
 
     {tab === "wallet" && <section><div className="page-title"><div><p className="eyebrow">Финансы</p><h1>Баланс</h1></div><button className="round-button" onClick={() => sendToBot("balance_history")}><Icon name="orders" /></button></div><div className="balance-card"><p>Доступно к выводу</p><h2>{Number(balance.available || 0).toLocaleString("ru-RU")} ₽</h2><span>В обработке у гаранта: {Number(balance.frozen || 0).toLocaleString("ru-RU")} ₽</span><button className="primary" onClick={() => sendToBot("withdraw_start")}>Вывести средства <Icon name="arrow" /></button></div><div className="list-row"><span className="list-icon mint"><Icon name="wallet" /></span><div><b>История операций</b><small>Пополнения, сделки и выплаты</small></div><Icon name="arrow" /></div></section>}
 
-    {tab === "profile" && <section><div className="profile-card"><span className="avatar large">{profile.name.slice(0, 1).toUpperCase()}</span><div><p className="eyebrow">Профиль LTeam</p><h1>{profile.name}</h1><span>{profile.username}</span></div><button className="round-button" onClick={() => sendToBot("profile_settings")}>⚙</button></div><div className="profile-stats"><div><b>0</b><span>Заказов</span></div><div><b>0</b><span>Продаж</span></div><div><b>—</b><span>Рейтинг</span></div></div><div className="settings-list"><button onClick={() => sendToBot("my_listings")}><Icon name="orders" /><span>Мои объявления</span><Icon name="arrow" /></button><button onClick={() => sendToBot("favorites")}><Icon name="star" /><span>Избранное</span><Icon name="arrow" /></button><button onClick={() => sendToBot("support")}><Icon name="chat" /><span>Поддержка</span><Icon name="arrow" /></button></div>{isAdmin && <AdminPanel />}</section>}
+    {tab === "profile" && <section><div className="profile-card"><span className="avatar large">{profile.name.slice(0, 1).toUpperCase()}</span><div><p className="eyebrow">Профиль LTeam</p><h1>{profile.name}</h1><span>{profile.username}</span></div><button className="round-button" onClick={() => setSettingsOpen(true)}>⚙</button></div><div className="profile-stats"><div><b>0</b><span>Заказов</span></div><div><b>0</b><span>Продаж</span></div><div><b>—</b><span>Рейтинг</span></div></div><div className="settings-list"><button onClick={() => sendToBot("my_listings")}><Icon name="orders" /><span>Мои объявления</span><Icon name="arrow" /></button><button onClick={() => setToast(favorites.length ? `В избранном: ${favorites.length}` : "В избранном пока ничего нет")}><Icon name="star" /><span>Избранное</span><Icon name="arrow" /></button><button onClick={() => sendToBot("support")}><Icon name="chat" /><span>Поддержка</span><Icon name="arrow" /></button></div>{isAdmin && <AdminPanel summary={adminSummary} />}</section>}
 
     {tab === "create" && <section><div className="page-title"><div><p className="eyebrow">Новая услуга</p><h1>Разместить объявление</h1></div></div><form className="listing-form" onSubmit={async (event) => { event.preventDefault(); setFormMessage(""); try { await apiRequest("/api/listings", "POST", listingForm); setFormMessage("Объявление отправлено на проверку."); setListingForm({ title: "", category: "Дизайн", price: "", description: "" }); } catch (error) { setFormMessage(error.message); } }}><label>Название<input required value={listingForm.title} onChange={(event) => setListingForm({ ...listingForm, title: event.target.value })} placeholder="Например, дизайн Telegram-канала" /></label><label>Категория<select value={listingForm.category} onChange={(event) => setListingForm({ ...listingForm, category: event.target.value })}><option>Дизайн</option><option>Разработка</option><option>Тексты</option><option>Монтаж</option><option>Другое</option></select></label><label>Цена, ₽<input required inputMode="numeric" value={listingForm.price} onChange={(event) => setListingForm({ ...listingForm, price: event.target.value })} placeholder="1500" /></label><label>Описание<textarea required value={listingForm.description} onChange={(event) => setListingForm({ ...listingForm, description: event.target.value })} placeholder="Расскажите, что получит покупатель" /></label><button className="primary" type="submit">Отправить на проверку <Icon name="arrow" /></button>{formMessage && <p className="form-message">{formMessage}</p>}</form></section>}
 

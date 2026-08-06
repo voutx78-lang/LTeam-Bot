@@ -9,6 +9,7 @@ import "./Chat.css";
 import "./Brand.css";
 import "./Home.css";
 import "./HomeRefine.css";
+import "./Guide.css";
 
 const tg = window.Telegram?.WebApp;
 const API_BASE = import.meta.env.VITE_API_URL || "https://lteam-botminiapp.onrender.com";
@@ -127,8 +128,12 @@ function HomeScreen({ profile, dealsCount, onNavigate }) {
     <div className="home-hero"><div className="home-grid" /><div className="home-signal"><span /><span /><span /></div><p className="eyebrow">LTEAM MARKET · БЕЗОПАСНЫЕ СДЕЛКИ</p><h1>Работа в Telegram,<br /><em>как на полноценной платформе.</em></h1><p>Находите исполнителей, публикуйте задачи и ведите сделки через гаранта LTeam.</p><div className="home-hero-actions"><button className="primary" onClick={() => onNavigate("catalog")}>Найти исполнителя <span>→</span></button><button className="secondary-action" onClick={() => onNavigate("create-order")}>Создать заказ</button></div></div>
     <div className="focus-card"><div><p className="eyebrow">ВАШ ЦЕНТР УПРАВЛЕНИЯ</p><h2>{dealsCount ? `Активных сделок: ${dealsCount}` : `Добро пожаловать, ${profile.name || "пользователь"}`}</h2><span>{dealsCount ? "Откройте сделки, чтобы проверить статусы и переписку." : "Начните с каталога или опубликуйте первую задачу."}</span></div><button onClick={() => onNavigate(dealsCount ? "orders" : "catalog")} aria-label="Открыть">→</button></div>
     <section className="how-it-works"><div className="section-heading"><div><p className="eyebrow">КАК ЭТО РАБОТАЕТ</p><h2>Три шага до результата</h2></div></div><div className="guide-steps"><article><b>01</b><div><h3>Выберите</h3><p>Услугу из каталога или создайте свой заказ.</p></div></article><article><b>02</b><div><h3>Обсудите</h3><p>Все условия и сообщения хранятся внутри сделки.</p></div></article><article><b>03</b><div><h3>Подтвердите</h3><p>Гарант помогает провести оплату безопасно.</p></div></article></div></section>
-    <button className="guide-link" onClick={() => sendToBot("open_guarantee")}><span className="guide-mark">?</span><span><b>Короткий гид по гаранту</b><small>Понятно о сделках, оплате и защите</small></span><i>→</i></button>
+    <button className="guide-link" onClick={() => onNavigate("guide")}><span className="guide-mark">?</span><span><b>Короткий гид по гаранту</b><small>Понятно о сделках, оплате и защите</small></span><i>→</i></button>
   </section>
+}
+
+function GuidePage({ onClose, onOrders }) {
+  return <section className="guide-page"><div className="page-title"><div><p className="eyebrow">БЕЗОПАСНАЯ СДЕЛКА</p><h1>Гарант LTeam</h1></div><button className="round-button" onClick={onClose}>×</button></div><p className="guide-intro">Деньги не передаются исполнителю, пока вы не подтвердите результат. Администратор помогает провести оплату и выплату.</p><div className="guide-flow"><article><b>1</b><div><h3>Согласуйте условия</h3><p>Обсудите задачу, цену и срок в чате сделки.</p></div></article><article><b>2</b><div><h3>Оплатите по реквизитам LTeam</h3><p>Реквизиты выдаются только после проверки сделки.</p></div></article><article><b>3</b><div><h3>Получите результат</h3><p>Проверьте работу и подтвердите выполнение.</p></div></article><article><b>4</b><div><h3>Выплата исполнителю</h3><p>После подтверждения администратор переводит деньги исполнителю.</p></div></article></div><button className="primary guide-primary" onClick={onOrders}>Перейти к заказам <span>→</span></button></section>
 }
 
 function OrderCard({ order, onOpen }) {
@@ -244,6 +249,8 @@ export default function App() {
       <WorkspaceCard profile={profile} dealsCount={dealItems.length} onNavigate={setTab} />
       <section className="quick-grid"><button onClick={() => { setTab("orders"); sendToBot("open_orders"); }}><span className="quick-icon purple">⌁</span><b>Найти исполнителя</b><small>Создать заказ</small></button><button onClick={() => sendToBot("open_guarantee")}><span className="quick-icon mint">✦</span><b>Как работает гарант</b><small>6 простых шагов</small></button></section>
     </div></>}
+
+    {tab === "guide" && <GuidePage onClose={() => setTab("home")} onOrders={() => setTab("orders")} />}
 
     {tab === "catalog" && <section><div className="page-title"><div><p className="eyebrow">Маркетплейс</p><h1>Каталог услуг</h1></div><button className="round-button" onClick={() => setQuery("")}><Icon name="filter" /></button></div><label className="search-box"><Icon name="search" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Что вы ищете?" /></label><div className="chips">{["Все", "Дизайн", "Разработка", "Тексты", "Монтаж"].map((category) => <button className={activeCategory === category ? "selected" : ""} onClick={() => setActiveCategory(category)} key={category}>{category}</button>)}</div>{listings.length ? <div className="listing-grid">{listings.map((item) => <ListingCard key={item.id} item={item} favorite={favorites.includes(item.id)} onFavorite={toggleFavorite} onOpen={(listing_id) => sendToBot("open_listing", { listing_id })} />)}</div> : <div className="empty-note"><Icon name="search" /><div><b>Ничего не найдено</b><span>Попробуйте изменить запрос или выберите другую категорию.</span></div></div>}</section>}
 

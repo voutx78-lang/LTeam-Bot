@@ -2365,6 +2365,9 @@ async def reply_menu_admin(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data == "home")
 async def home(call: CallbackQuery):
+    await send_home(call.message)
+    await call.answer()
+    return
     await show_screen(
         call,
         """

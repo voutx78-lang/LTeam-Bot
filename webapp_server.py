@@ -115,6 +115,33 @@ def orders():
     return jsonify([dict(row) for row in rows])
 
 
+@app.post("/api/orders")
+def create_order():
+    """Create an order from the MiniApp using the same marketplace table as the bot."""
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    payload = request.get_json(silent=True) or {}
+    title = str(payload.get("title", "")).strip()[:120]
+    category = str(payload.get("category", "Другое")).strip()[:80]
+    description = str(payload.get("description", "")).strip()[:2000]
+    deadline = str(payload.get("deadline", "По договорённости")).strip()[:80]
+    try:
+        budget = max(1, int(payload.get("budget", 0)))
+    except (TypeError, ValueError):
+        budget = 0
+    if not title or not description or not budget:
+        return jsonify({"error": "validation", "message": "Заполните название, описание и бюджет."}), 400
+    with db() as connection:
+        cursor = connection.execute(
+            """INSERT INTO orders (customer_id, title, category, budget, description, deadline, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, title, category, budget, description, deadline, "moderation", datetime.now().isoformat()),
+        )
+        connection.commit()
+    return jsonify({"ok": True, "order_id": cursor.lastrowid, "status": "moderation"}), 201
+
+
 @app.get("/api/listings/mine")
 def my_listings():
     user_id = current_user_id()

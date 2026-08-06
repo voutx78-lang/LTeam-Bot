@@ -156,10 +156,20 @@ export default function App() {
         setProfile({ name: data.name || "Пользователь", username: data.username ? `@${data.username}` : "LTeam user" });
       })
       .catch(() => setIsSynced(false));
+    const retryProfileSync = () => apiFetch("/api/me")
+      .then((data) => {
+        if (!data?.authenticated) return;
+        setIsSynced(true);
+        setIsAdmin(Boolean(data.is_admin));
+        setProfile({ name: data.name || "Пользователь", username: data.username ? `@${data.username}` : "LTeam user" });
+      })
+      .catch(() => setIsSynced(false));
+    const profileRetry = window.setTimeout(retryProfileSync, 1200);
     apiFetch("/api/listings").then((items) => setCatalogListings(items.map((item) => ({ ...item, seller: "Исполнитель LTeam", rating: "—", orders: 0, accent: "bot" })))).catch(() => setCatalogListings([]));
     apiFetch("/api/deals").then(setDealItems).catch(() => setDealItems([]));
     apiFetch("/api/balance").then(setBalance).catch(() => {});
     apiFetch("/api/admin/summary").then(setAdminSummary).catch(() => setAdminSummary({}));
+    return () => window.clearTimeout(profileRetry);
   }, []);
 
   useEffect(() => {

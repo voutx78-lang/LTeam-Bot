@@ -142,6 +142,35 @@ def create_order():
     return jsonify({"ok": True, "order_id": cursor.lastrowid, "status": "moderation"}), 201
 
 
+@app.post("/api/orders/<int:order_id>/applications")
+def create_order_application(order_id: int):
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    payload = request.get_json(silent=True) or {}
+    comment = str(payload.get("comment", "")).strip()[:1200]
+    deadline = str(payload.get("deadline", "По договорённости")).strip()[:80]
+    try:
+        price = max(1, int(payload.get("price", 0)))
+    except (TypeError, ValueError):
+        price = 0
+    if len(comment) < 5 or not price:
+        return jsonify({"error": "validation", "message": "Укажите цену и коротко расскажите о своём предложении."}), 400
+    with db() as connection:
+        order = connection.execute("SELECT customer_id FROM orders WHERE id=? AND status='active'", (order_id,)).fetchone()
+        if not order:
+            return jsonify({"error": "not_found", "message": "Заказ уже недоступен."}), 404
+        if int(order["customer_id"]) == user_id:
+            return jsonify({"error": "validation", "message": "Нельзя откликнуться на свой заказ."}), 400
+        now = datetime.now().isoformat()
+        connection.execute("""INSERT INTO order_applications (order_id, executor_id, customer_id, price, deadline, comment, status, created_at, updated_at, executor_card_mask, executor_ton_mask)
+            VALUES (?, ?, ?, ?, ?, ?, 'new', ?, ?, ?, '')
+            ON CONFLICT(order_id, executor_id) DO UPDATE SET price=excluded.price, deadline=excluded.deadline, comment=excluded.comment, status='new', updated_at=excluded.updated_at""",
+            (order_id, user_id, order["customer_id"], price, deadline, comment, now, now, "будет запрошен при выводе"))
+        connection.commit()
+    return jsonify({"ok": True, "status": "new"}), 201
+
+
 @app.get("/api/listings/mine")
 def my_listings():
     user_id = current_user_id()

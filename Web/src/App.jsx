@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import "./Form.css";
+import "./Polish.css";
 
 const tg = window.Telegram?.WebApp;
 const API_BASE = import.meta.env.VITE_API_URL || "https://lteam-botminiapp.onrender.com";
@@ -79,9 +80,32 @@ function AdminPanel() {
   </section>
 }
 
+function SettingsSheet({ theme, setTheme, onClose }) {
+  const themes = [
+    ["light", "Светлая", "Светлый фон и мягкие акценты"],
+    ["dark", "Тёмная", "Комфортно вечером"],
+    ["midnight", "Неон", "Глубокий фон и яркий акцент"],
+  ];
+  return <div className="settings-sheet" role="dialog" aria-modal="true">
+    <div className="sheet-backdrop" onClick={onClose} />
+    <section className="sheet-card">
+      <div className="sheet-grab" />
+      <div className="sheet-title"><div><p className="eyebrow">Персонализация</p><h2>Настройки</h2></div><button className="round-button" onClick={onClose}>×</button></div>
+      <p className="settings-caption">Тема сохраняется только для вашего профиля в LTeam Market.</p>
+      <div className="theme-options">{themes.map(([id, title, note]) => <button key={id} className={`theme-option ${theme === id ? "selected" : ""}`} onClick={() => setTheme(id)}><span className={`theme-preview ${id}`}><i /><i /><i /></span><span><b>{title}</b><small>{note}</small></span><em>{theme === id ? "✓" : ""}</em></button>)}</div>
+      <div className="settings-block"><button onClick={() => sendToBot("profile_settings")}><Icon name="profile" /><span>Настройки профиля</span><Icon name="arrow" /></button><button onClick={() => sendToBot("support")}><Icon name="chat" /><span>Помощь и поддержка</span><Icon name="arrow" /></button></div>
+    </section>
+  </div>
+}
+
 export default function App() {
   const [tab, setTab] = useState("home");
   const [query, setQuery] = useState("");
+  const [activeCategory, setActiveCategory] = useState("Все");
+  const [theme, setTheme] = useState(() => localStorage.getItem("lteam-theme") || "light");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [favorites, setFavorites] = useState(() => JSON.parse(localStorage.getItem("lteam-favorites") || "[]"));
+  const [toast, setToast] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
   const [catalogListings, setCatalogListings] = useState([]);
   const [dealItems, setDealItems] = useState([]);
@@ -109,7 +133,32 @@ export default function App() {
     apiFetch("/api/balance").then(setBalance).catch(() => {});
   }, []);
 
-  const listings = useMemo(() => catalogListings.filter((item) => `${item.title} ${item.category} ${item.seller}`.toLowerCase().includes(query.toLowerCase())), [query, catalogListings]);
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("lteam-theme", theme);
+    tg?.setHeaderColor?.(theme === "dark" || theme === "midnight" ? "#151525" : "#f7f8fc");
+    tg?.setBackgroundColor?.(theme === "dark" || theme === "midnight" ? "#151525" : "#f7f8fc");
+  }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem("lteam-favorites", JSON.stringify(favorites));
+  }, [favorites]);
+
+  useEffect(() => {
+    if (!toast) return undefined;
+    const timer = window.setTimeout(() => setToast(""), 2600);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  const listings = useMemo(() => catalogListings.filter((item) => {
+    const matchesSearch = `${item.title} ${item.category} ${item.seller}`.toLowerCase().includes(query.toLowerCase());
+    const matchesCategory = activeCategory === "Все" || item.category.toLowerCase().includes(activeCategory.toLowerCase());
+    return matchesSearch && matchesCategory;
+  }), [query, activeCategory, catalogListings]);
+  const toggleFavorite = (id) => {
+    setFavorites((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
+    setToast(favorites.includes(id) ? "Удалено из избранного" : "Добавлено в избранное");
+  };
   const navItems = [
     ["home", "home", "Главная"], ["catalog", "search", "Каталог"], ["orders", "orders", "Заказы"], ["wallet", "wallet", "Баланс"], ["profile", "profile", "Профиль"],
   ];
@@ -117,6 +166,7 @@ export default function App() {
   return <main className="app-shell">
     <header className="topbar"><button className="brand" onClick={() => setTab("home")}><span className="brand-mark">L</span><span>LTeam <b>Market</b></span></button><button className="round-button" onClick={() => sendToBot("open_notifications")} aria-label="Уведомления"><Icon name="bell" /></button></header>
 
+    <button className="floating-settings" onClick={() => setSettingsOpen(true)} aria-label="Настройки">◐</button>
     {tab === "home" && <>
       <section className="hero-card"><div className="hero-orb one" /><div className="hero-orb two" /><p className="eyebrow">Безопасные сделки в Telegram</p><h1>Находите исполнителей.<br /><em>Работайте спокойно.</em></h1><p className="hero-copy">Оплата проходит через гаранта LTeam, а деньги исполнитель получает после вашего подтверждения.</p><div className="hero-buttons"><button className="primary" onClick={() => setTab("catalog")}>Смотреть каталог <Icon name="arrow" /></button><button className="ghost" onClick={() => setTab("create")}><Icon name="plus" /> Разместить</button></div></section>
       <section className="trust-row"><div><Icon name="shield" /><span><b>Гарант-сделки</b><small>Оплата через администратора</small></span></div><div><Icon name="check" /><span><b>Проверенные отзывы</b><small>Только после заказа</small></span></div></section>
@@ -135,5 +185,7 @@ export default function App() {
     {tab === "create" && <section><div className="page-title"><div><p className="eyebrow">Новая услуга</p><h1>Разместить объявление</h1></div></div><form className="listing-form" onSubmit={async (event) => { event.preventDefault(); setFormMessage(""); try { await apiRequest("/api/listings", "POST", listingForm); setFormMessage("Объявление отправлено на проверку."); setListingForm({ title: "", category: "Дизайн", price: "", description: "" }); } catch (error) { setFormMessage(error.message); } }}><label>Название<input required value={listingForm.title} onChange={(event) => setListingForm({ ...listingForm, title: event.target.value })} placeholder="Например, дизайн Telegram-канала" /></label><label>Категория<select value={listingForm.category} onChange={(event) => setListingForm({ ...listingForm, category: event.target.value })}><option>Дизайн</option><option>Разработка</option><option>Тексты</option><option>Монтаж</option><option>Другое</option></select></label><label>Цена, ₽<input required inputMode="numeric" value={listingForm.price} onChange={(event) => setListingForm({ ...listingForm, price: event.target.value })} placeholder="1500" /></label><label>Описание<textarea required value={listingForm.description} onChange={(event) => setListingForm({ ...listingForm, description: event.target.value })} placeholder="Расскажите, что получит покупатель" /></label><button className="primary" type="submit">Отправить на проверку <Icon name="arrow" /></button>{formMessage && <p className="form-message">{formMessage}</p>}</form></section>}
 
     <nav className="bottom-nav">{navItems.map(([id, icon, label]) => <button className={tab === id ? "active" : ""} key={id} onClick={() => setTab(id)}><Icon name={icon} /><span>{label}</span></button>)}</nav>
+    {settingsOpen && <SettingsSheet theme={theme} setTheme={setTheme} onClose={() => setSettingsOpen(false)} />}
+    {toast && <div className="toast"><span>✓</span>{toast}</div>}
   </main>;
 }

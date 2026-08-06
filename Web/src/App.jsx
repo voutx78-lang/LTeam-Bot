@@ -2,6 +2,15 @@ import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 
 const tg = window.Telegram?.WebApp;
+const API_BASE = import.meta.env.VITE_API_URL || "";
+
+async function apiFetch(path) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    headers: tg?.initData ? { "X-Telegram-Init-Data": tg.initData } : {},
+  });
+  if (!response.ok) throw new Error(`API ${response.status}`);
+  return response.json();
+}
 
 const demoListings = [
   { id: 14, title: "Telegram-бот под ключ", category: "Разработка", price: 3500, seller: "@northdev", rating: "4.9", orders: 27, accent: "bot" },
@@ -34,12 +43,15 @@ function ListingCard({ item, onOpen }) {
   </article>
 }
 
-function DealCard() {
+function DealCard({ deal }) {
+  const title = deal?.title || "Сделка LTeam";
+  const amount = Number(deal?.amount || 0).toLocaleString("ru-RU");
+  const status = deal?.status === "completed" ? "Завершена" : deal?.status === "waiting_buyer_confirm" ? "Проверка" : "В работе";
   return <article className="deal-card">
-    <div className="deal-head"><div><p className="eyebrow">Сделка #1248</p><h3>Telegram-бот под ключ</h3></div><span className="status working">В работе</span></div>
-    <div className="deal-people"><span>Покупатель <b>Вы</b></span><i>→</i><span>Исполнитель <b>@northdev</b></span></div>
+    <div className="deal-head"><div><p className="eyebrow">Сделка #{deal?.id}</p><h3>{title}</h3></div><span className="status working">{status}</span></div>
+    <div className="deal-people"><span>Безопасная сделка LTeam</span></div>
     <div className="timeline">{dealStages.map((stage, index) => <div className={index < 3 ? "done" : index === 3 ? "current" : ""} key={stage}><i>{index < 3 ? "✓" : index + 1}</i><span>{stage}</span></div>)}</div>
-    <div className="deal-bottom"><span>К оплате <b>3 500 ₽</b></span><button className="text-button" onClick={() => sendToBot("open_deal", { deal_id: 1248 })}>Открыть <Icon name="arrow" /></button></div>
+    <div className="deal-bottom"><span>К оплате <b>{amount} ₽</b></span><button className="text-button" onClick={() => sendToBot("open_deal", { deal_id: deal?.id })}>Открыть <Icon name="arrow" /></button></div>
   </article>
 }
 
@@ -59,6 +71,9 @@ export default function App() {
   const [tab, setTab] = useState("home");
   const [query, setQuery] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
+  const [catalogListings, setCatalogListings] = useState([]);
+  const [dealItems, setDealItems] = useState([]);
+  const [balance, setBalance] = useState({ available: 0, frozen: 0 });
   const [profile, setProfile] = useState({ name: tg?.initDataUnsafe?.user?.first_name || "Гость", username: tg?.initDataUnsafe?.user?.username ? `@${tg.initDataUnsafe.user.username}` : "LTeam user" });
 
   useEffect(() => {
@@ -68,17 +83,19 @@ export default function App() {
     tg?.setBackgroundColor?.("#f7f8fc");
 
     // Роль приходит только с защищённого API. Клиент не имеет права сам выдавать доступ.
-    fetch("/api/me", { headers: tg?.initData ? { "X-Telegram-Init-Data": tg.initData } : {} })
-      .then((response) => response.ok ? response.json() : null)
+    apiFetch("/api/me")
       .then((data) => {
         if (!data) return;
         setIsAdmin(Boolean(data.is_admin));
         setProfile({ name: data.name || "Пользователь", username: data.username ? `@${data.username}` : "LTeam user" });
       })
       .catch(() => {});
+    apiFetch("/api/listings").then((items) => setCatalogListings(items.map((item) => ({ ...item, seller: "Исполнитель LTeam", rating: "—", orders: 0, accent: "bot" })))).catch(() => setCatalogListings([]));
+    apiFetch("/api/deals").then(setDealItems).catch(() => setDealItems([]));
+    apiFetch("/api/balance").then(setBalance).catch(() => {});
   }, []);
 
-  const listings = useMemo(() => demoListings.filter((item) => `${item.title} ${item.category} ${item.seller}`.toLowerCase().includes(query.toLowerCase())), [query]);
+  const listings = useMemo(() => catalogListings.filter((item) => `${item.title} ${item.category} ${item.seller}`.toLowerCase().includes(query.toLowerCase())), [query, catalogListings]);
   const navItems = [
     ["home", "home", "Главная"], ["catalog", "search", "Каталог"], ["orders", "orders", "Заказы"], ["wallet", "wallet", "Баланс"], ["profile", "profile", "Профиль"],
   ];
@@ -89,15 +106,15 @@ export default function App() {
     {tab === "home" && <>
       <section className="hero-card"><div className="hero-orb one" /><div className="hero-orb two" /><p className="eyebrow">Безопасные сделки в Telegram</p><h1>Находите исполнителей.<br /><em>Работайте спокойно.</em></h1><p className="hero-copy">Оплата проходит через гаранта LTeam, а деньги исполнитель получает после вашего подтверждения.</p><div className="hero-buttons"><button className="primary" onClick={() => setTab("catalog")}>Смотреть каталог <Icon name="arrow" /></button><button className="ghost" onClick={() => sendToBot("create_listing")}><Icon name="plus" /> Разместить</button></div></section>
       <section className="trust-row"><div><Icon name="shield" /><span><b>Гарант-сделки</b><small>Оплата через администратора</small></span></div><div><Icon name="check" /><span><b>Проверенные отзывы</b><small>Только после заказа</small></span></div></section>
-      <section><div className="section-heading"><div><p className="eyebrow">Популярное</p><h2>Услуги для старта</h2></div><button className="text-button" onClick={() => setTab("catalog")}>Все <Icon name="arrow" /></button></div><div className="listing-grid">{demoListings.slice(0, 2).map((item) => <ListingCard key={item.id} item={item} onOpen={(listing_id) => sendToBot("open_listing", { listing_id })} />)}</div></section>
+      <section><div className="section-heading"><div><p className="eyebrow">Популярное</p><h2>Услуги для старта</h2></div><button className="text-button" onClick={() => setTab("catalog")}>Все <Icon name="arrow" /></button></div><div className="listing-grid">{catalogListings.slice(0, 2).map((item) => <ListingCard key={item.id} item={item} onOpen={(listing_id) => sendToBot("open_listing", { listing_id })} />)}</div></section>
       <section className="quick-grid"><button onClick={() => { setTab("orders"); sendToBot("open_orders"); }}><span className="quick-icon purple">⌁</span><b>Найти исполнителя</b><small>Создать заказ</small></button><button onClick={() => sendToBot("open_guarantee")}><span className="quick-icon mint">✦</span><b>Как работает гарант</b><small>6 простых шагов</small></button></section>
     </>}
 
     {tab === "catalog" && <section><div className="page-title"><div><p className="eyebrow">Маркетплейс</p><h1>Каталог услуг</h1></div><button className="round-button"><Icon name="filter" /></button></div><label className="search-box"><Icon name="search" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Что вы ищете?" /></label><div className="chips"><button className="selected">Все</button><button>Дизайн</button><button>Разработка</button><button>Тексты</button></div><div className="listing-grid">{listings.map((item) => <ListingCard key={item.id} item={item} onOpen={(listing_id) => sendToBot("open_listing", { listing_id })} />)}</div></section>}
 
-    {tab === "orders" && <section><div className="page-title"><div><p className="eyebrow">Ваши задачи</p><h1>Заказы и сделки</h1></div><button className="round-button" onClick={() => sendToBot("create_order")}><Icon name="plus" /></button></div><button className="create-order" onClick={() => sendToBot("create_order")}><span><Icon name="plus" /></span><div><b>Создать заказ</b><small>Исполнители откликнутся сами</small></div><Icon name="arrow" /></button><DealCard /><div className="empty-note"><Icon name="chat" /><div><b>Все обсуждения внутри сделки</b><span>Так гарант сможет помочь при споре.</span></div></div></section>}
+    {tab === "orders" && <section><div className="page-title"><div><p className="eyebrow">Ваши задачи</p><h1>Заказы и сделки</h1></div><button className="round-button" onClick={() => sendToBot("create_order")}><Icon name="plus" /></button></div><button className="create-order" onClick={() => sendToBot("create_order")}><span><Icon name="plus" /></span><div><b>Создать заказ</b><small>Исполнители откликнутся сами</small></div><Icon name="arrow" /></button>{dealItems.length ? dealItems.map((deal) => <DealCard key={deal.id} deal={deal} />) : <div className="empty-note"><Icon name="chat" /><div><b>Сделок пока нет</b><span>Создайте заказ или выберите услугу в каталоге.</span></div></div>}<div className="empty-note"><Icon name="chat" /><div><b>Все обсуждения внутри сделки</b><span>Так гарант сможет помочь при споре.</span></div></div></section>}
 
-    {tab === "wallet" && <section><div className="page-title"><div><p className="eyebrow">Финансы</p><h1>Баланс</h1></div><button className="round-button" onClick={() => sendToBot("balance_history")}><Icon name="orders" /></button></div><div className="balance-card"><p>Доступно к выводу</p><h2>0 ₽</h2><span>Выплата производится администратором вручную</span><button className="primary" onClick={() => sendToBot("withdraw_start")}>Вывести средства <Icon name="arrow" /></button></div><div className="list-row"><span className="list-icon mint"><Icon name="wallet" /></span><div><b>История операций</b><small>Пополнения, сделки и выплаты</small></div><Icon name="arrow" /></div></section>}
+    {tab === "wallet" && <section><div className="page-title"><div><p className="eyebrow">Финансы</p><h1>Баланс</h1></div><button className="round-button" onClick={() => sendToBot("balance_history")}><Icon name="orders" /></button></div><div className="balance-card"><p>Доступно к выводу</p><h2>{Number(balance.available || 0).toLocaleString("ru-RU")} ₽</h2><span>В обработке у гаранта: {Number(balance.frozen || 0).toLocaleString("ru-RU")} ₽</span><button className="primary" onClick={() => sendToBot("withdraw_start")}>Вывести средства <Icon name="arrow" /></button></div><div className="list-row"><span className="list-icon mint"><Icon name="wallet" /></span><div><b>История операций</b><small>Пополнения, сделки и выплаты</small></div><Icon name="arrow" /></div></section>}
 
     {tab === "profile" && <section><div className="profile-card"><span className="avatar large">{profile.name.slice(0, 1).toUpperCase()}</span><div><p className="eyebrow">Профиль LTeam</p><h1>{profile.name}</h1><span>{profile.username}</span></div><button className="round-button" onClick={() => sendToBot("profile_settings")}>⚙</button></div><div className="profile-stats"><div><b>0</b><span>Заказов</span></div><div><b>0</b><span>Продаж</span></div><div><b>—</b><span>Рейтинг</span></div></div><div className="settings-list"><button onClick={() => sendToBot("my_listings")}><Icon name="orders" /><span>Мои объявления</span><Icon name="arrow" /></button><button onClick={() => sendToBot("favorites")}><Icon name="star" /><span>Избранное</span><Icon name="arrow" /></button><button onClick={() => sendToBot("support")}><Icon name="chat" /><span>Поддержка</span><Icon name="arrow" /></button></div>{isAdmin && <AdminPanel />}</section>}
 

@@ -13,6 +13,7 @@ import "./Guide.css";
 import "./Catalog.css";
 import "./CatalogPlatform.css";
 import "./CatalogV3.css";
+import "./CatalogFix.css";
 import CatalogV3 from "./CatalogV3";
 
 const tg = window.Telegram?.WebApp;

@@ -5,6 +5,7 @@ import "./Polish.css";
 import "./Interactions.css";
 import "./Experience.css";
 import "./Status.css";
+import "./Chat.css";
 
 const tg = window.Telegram?.WebApp;
 const API_BASE = import.meta.env.VITE_API_URL || "https://lteam-botminiapp.onrender.com";
@@ -118,6 +119,22 @@ function WorkspaceCard({ profile, dealsCount, onNavigate }) {
   </section>
 }
 
+function OrderCard({ order, onOpen }) {
+  const budget = Number(order.budget || 0).toLocaleString("ru-RU");
+  return <article className="order-card" onClick={() => onOpen(order)}><div className="order-card-top"><span className="order-icon">◈</span><span className="status working">{order.status || "active"}</span></div><p className="eyebrow">{order.category || "Заказ"}</p><h3>{order.title}</h3><p className="order-description">{order.description || "Описание заказа"}</p><div className="order-card-bottom"><b>до {budget} ₽</b><span>Открыть чат ›</span></div></article>
+}
+
+function ChatSheet({ chat, currentUserId, onClose }) {
+  const [messages, setMessages] = useState([]);
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const basePath = chat.kind === "deal" ? `/api/deals/${chat.item.id}/messages` : `/api/orders/${chat.item.id}/messages`;
+  const loadMessages = () => apiFetch(basePath).then(setMessages).catch(() => setMessages([]));
+  useEffect(() => { loadMessages(); const timer = window.setInterval(loadMessages, 7000); return () => window.clearInterval(timer); }, [chat.item.id, chat.kind]);
+  const submit = async (event) => { event.preventDefault(); if (!draft.trim() || sending) return; setSending(true); try { await apiRequest(basePath, "POST", { text: draft }); setDraft(""); await loadMessages(); } finally { setSending(false); } };
+  return <div className="chat-sheet"><div className="sheet-backdrop" onClick={onClose} /><section className="chat-card"><header className="chat-header"><button className="round-button" onClick={onClose}>‹</button><div><p className="eyebrow">{chat.kind === "deal" ? "Безопасная сделка" : "Заказ"}</p><b>{chat.item.title || `Диалог #${chat.item.id}`}</b></div><span className="chat-secure">● защищён</span></header><div className="chat-notice">Переписка хранится в сделке. При споре гарант сможет помочь.</div><div className="messages">{messages.length ? messages.map((message) => <div className={Number(message.sender_id) === Number(currentUserId) ? "message mine" : "message"} key={message.id}><span>{message.text}</span><small>{String(message.created_at || "").slice(11, 16)}</small></div>) : <div className="chat-empty">Пока нет сообщений. Начните обсуждение условий.</div>}</div><form className="chat-compose" onSubmit={submit}><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Написать сообщение..." maxLength="1200" /><button type="submit" disabled={!draft.trim() || sending}>↑</button></form></section></div>
+}
+
 export default function App() {
   const [tab, setTab] = useState("home");
   const [query, setQuery] = useState("");
@@ -129,7 +146,9 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [isSynced, setIsSynced] = useState(false);
   const [catalogListings, setCatalogListings] = useState([]);
+  const [orderItems, setOrderItems] = useState([]);
   const [dealItems, setDealItems] = useState([]);
+  const [chat, setChat] = useState(null);
   const [adminSummary, setAdminSummary] = useState({});
   const [balance, setBalance] = useState({ available: 0, frozen: 0 });
   const [listingForm, setListingForm] = useState({ title: "", category: "Дизайн", price: "", description: "" });
@@ -153,7 +172,7 @@ export default function App() {
         if (!data?.authenticated) return;
         setIsSynced(true);
         setIsAdmin(Boolean(data.is_admin));
-        setProfile({ name: data.name || "Пользователь", username: data.username ? `@${data.username}` : "LTeam user" });
+        setProfile({ id: data.id, name: data.name || "Пользователь", username: data.username ? `@${data.username}` : "LTeam user" });
       })
       .catch(() => setIsSynced(false));
     const retryProfileSync = () => apiFetch("/api/me")
@@ -161,11 +180,12 @@ export default function App() {
         if (!data?.authenticated) return;
         setIsSynced(true);
         setIsAdmin(Boolean(data.is_admin));
-        setProfile({ name: data.name || "Пользователь", username: data.username ? `@${data.username}` : "LTeam user" });
+        setProfile({ id: data.id, name: data.name || "Пользователь", username: data.username ? `@${data.username}` : "LTeam user" });
       })
       .catch(() => setIsSynced(false));
     const profileRetry = window.setTimeout(retryProfileSync, 1200);
     apiFetch("/api/listings").then((items) => setCatalogListings(items.map((item) => ({ ...item, seller: "Исполнитель LTeam", rating: "—", orders: 0, accent: "bot" })))).catch(() => setCatalogListings([]));
+    apiFetch("/api/orders").then(setOrderItems).catch(() => setOrderItems([]));
     apiFetch("/api/deals").then(setDealItems).catch(() => setDealItems([]));
     apiFetch("/api/balance").then(setBalance).catch(() => {});
     apiFetch("/api/admin/summary").then(setAdminSummary).catch(() => setAdminSummary({}));
@@ -216,7 +236,7 @@ export default function App() {
 
     {tab === "catalog" && <section><div className="page-title"><div><p className="eyebrow">Маркетплейс</p><h1>Каталог услуг</h1></div><button className="round-button" onClick={() => setQuery("")}><Icon name="filter" /></button></div><label className="search-box"><Icon name="search" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Что вы ищете?" /></label><div className="chips">{["Все", "Дизайн", "Разработка", "Тексты", "Монтаж"].map((category) => <button className={activeCategory === category ? "selected" : ""} onClick={() => setActiveCategory(category)} key={category}>{category}</button>)}</div>{listings.length ? <div className="listing-grid">{listings.map((item) => <ListingCard key={item.id} item={item} favorite={favorites.includes(item.id)} onFavorite={toggleFavorite} onOpen={(listing_id) => sendToBot("open_listing", { listing_id })} />)}</div> : <div className="empty-note"><Icon name="search" /><div><b>Ничего не найдено</b><span>Попробуйте изменить запрос или выберите другую категорию.</span></div></div>}</section>}
 
-    {tab === "orders" && <section><div className="page-title"><div><p className="eyebrow">Ваши задачи</p><h1>Заказы и сделки</h1></div><button className="round-button" onClick={() => sendToBot("create_order")}><Icon name="plus" /></button></div><button className="create-order" onClick={() => sendToBot("create_order")}><span><Icon name="plus" /></span><div><b>Создать заказ</b><small>Исполнители откликнутся сами</small></div><Icon name="arrow" /></button>{dealItems.length ? dealItems.map((deal) => <DealCard key={deal.id} deal={deal} />) : <div className="empty-note"><Icon name="chat" /><div><b>Сделок пока нет</b><span>Создайте заказ или выберите услугу в каталоге.</span></div></div>}<div className="empty-note"><Icon name="chat" /><div><b>Все обсуждения внутри сделки</b><span>Так гарант сможет помочь при споре.</span></div></div></section>}
+    {tab === "orders" && <section><div className="page-title"><div><p className="eyebrow">Ваши задачи</p><h1>Заказы и сделки</h1></div><button className="round-button" onClick={() => sendToBot("create_order")}><Icon name="plus" /></button></div><button className="create-order" onClick={() => sendToBot("create_order")}><span><Icon name="plus" /></span><div><b>Создать заказ</b><small>Исполнители откликнутся сами</small></div><Icon name="arrow" /></button><div className="subsection-title"><b>Заказы</b><span>{orderItems.length}</span></div>{orderItems.length ? <div className="order-grid">{orderItems.map((order) => <OrderCard key={order.id} order={order} onOpen={(item) => setChat({ kind: "order", item })} />)}</div> : <div className="empty-note"><Icon name="orders" /><div><b>Заказов пока нет</b><span>Здесь появятся все заказы, созданные в боте или MiniApp.</span></div></div>}<div className="subsection-title"><b>Сделки</b><span>{dealItems.length}</span></div>{dealItems.length ? dealItems.map((deal) => <div className="deal-with-chat" key={deal.id}><DealCard deal={deal} /><button className="deal-chat-button" onClick={() => setChat({ kind: "deal", item: deal })}>Открыть чат сделки</button></div>) : <div className="empty-note"><Icon name="chat" /><div><b>Сделок пока нет</b><span>Все обсуждения и статусы сделок будут здесь.</span></div></div>}</section>}
 
     {tab === "wallet" && <section><div className="page-title"><div><p className="eyebrow">Финансы</p><h1>Баланс</h1></div><button className="round-button" onClick={() => sendToBot("balance_history")}><Icon name="orders" /></button></div><div className="balance-card"><p>Доступно к выводу</p><h2>{Number(balance.available || 0).toLocaleString("ru-RU")} ₽</h2><span>В обработке у гаранта: {Number(balance.frozen || 0).toLocaleString("ru-RU")} ₽</span><button className="primary" onClick={() => sendToBot("withdraw_start")}>Вывести средства <Icon name="arrow" /></button></div><div className="list-row"><span className="list-icon mint"><Icon name="wallet" /></span><div><b>История операций</b><small>Пополнения, сделки и выплаты</small></div><Icon name="arrow" /></div></section>}
 
@@ -227,5 +247,6 @@ export default function App() {
     <nav className="bottom-nav">{navItems.map(([id, icon, label]) => <button className={tab === id ? "active" : ""} key={id} onClick={() => setTab(id)}><Icon name={icon} /><span>{label}</span></button>)}</nav>
     {settingsOpen && <SettingsSheet theme={theme} setTheme={setTheme} onClose={() => setSettingsOpen(false)} />}
     {toast && <div className="toast"><span>✓</span>{toast}</div>}
+    {chat && <ChatSheet chat={chat} currentUserId={profile.id} onClose={() => setChat(null)} />}
   </main>;
 }

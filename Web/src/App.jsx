@@ -3,6 +3,7 @@ import "./App.css";
 import "./Form.css";
 import "./Polish.css";
 import "./Interactions.css";
+import "./Experience.css";
 
 const tg = window.Telegram?.WebApp;
 const API_BASE = import.meta.env.VITE_API_URL || "https://lteam-botminiapp.onrender.com";
@@ -100,6 +101,16 @@ function SettingsSheet({ theme, setTheme, onClose }) {
   </div>
 }
 
+function WorkspaceCard({ profile, dealsCount, onNavigate }) {
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? "Доброе утро" : hour < 18 ? "Добрый день" : "Добрый вечер";
+  return <section className="workspace-card">
+    <div className="workspace-glow" />
+    <div className="workspace-copy"><p>{greeting}, {profile.name || "пользователь"}</p><h2>Ваш рабочий стол</h2><span>{dealsCount ? `Активных сделок: ${dealsCount}` : "Создайте заказ или разместите первую услугу"}</span></div>
+    <div className="workspace-actions"><button onClick={() => onNavigate("create")}><b>＋</b><span>Разместить</span></button><button onClick={() => onNavigate("orders")}><b>↗</b><span>Заказы</span></button><button onClick={() => onNavigate("wallet")}><b>₽</b><span>Баланс</span></button></div>
+  </section>
+}
+
 export default function App() {
   const [tab, setTab] = useState("home");
   const [query, setQuery] = useState("");
@@ -173,6 +184,7 @@ export default function App() {
       <section className="hero-card"><div className="hero-orb one" /><div className="hero-orb two" /><p className="eyebrow">Безопасные сделки в Telegram</p><h1>Находите исполнителей.<br /><em>Работайте спокойно.</em></h1><p className="hero-copy">Оплата проходит через гаранта LTeam, а деньги исполнитель получает после вашего подтверждения.</p><div className="hero-buttons"><button className="primary" onClick={() => setTab("catalog")}>Смотреть каталог <Icon name="arrow" /></button><button className="ghost" onClick={() => setTab("create")}><Icon name="plus" /> Разместить</button></div></section>
       <section className="trust-row"><div><Icon name="shield" /><span><b>Гарант-сделки</b><small>Оплата через администратора</small></span></div><div><Icon name="check" /><span><b>Проверенные отзывы</b><small>Только после заказа</small></span></div></section>
       <section><div className="section-heading"><div><p className="eyebrow">Популярное</p><h2>Услуги для старта</h2></div><button className="text-button" onClick={() => setTab("catalog")}>Все <Icon name="arrow" /></button></div><div className="listing-grid">{catalogListings.slice(0, 2).map((item) => <ListingCard key={item.id} item={item} onOpen={(listing_id) => sendToBot("open_listing", { listing_id })} />)}</div></section>
+      <WorkspaceCard profile={profile} dealsCount={dealItems.length} onNavigate={setTab} />
       <section className="quick-grid"><button onClick={() => { setTab("orders"); sendToBot("open_orders"); }}><span className="quick-icon purple">⌁</span><b>Найти исполнителя</b><small>Создать заказ</small></button><button onClick={() => sendToBot("open_guarantee")}><span className="quick-icon mint">✦</span><b>Как работает гарант</b><small>6 простых шагов</small></button></section>
     </>}
 

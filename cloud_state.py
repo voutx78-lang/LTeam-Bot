@@ -55,8 +55,13 @@ def snapshot_sqlite() -> bool:
         return False
     snapshot = SQLITE_PATH.with_suffix(".snapshot")
     try:
-        with sqlite3.connect(SQLITE_PATH) as source, sqlite3.connect(snapshot) as target:
+        source = sqlite3.connect(SQLITE_PATH)
+        target = sqlite3.connect(snapshot)
+        try:
             source.backup(target)
+        finally:
+            target.close()
+            source.close()
         data = snapshot.read_bytes()
         import psycopg
         with psycopg.connect(url) as connection:

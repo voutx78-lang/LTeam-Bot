@@ -44,6 +44,17 @@ def notify_admins(text: str) -> None:
             continue
 
 
+def notify_user(user_id: int, text: str) -> None:
+    """Best-effort user notification; marketplace actions remain successful if Telegram is unavailable."""
+    if not BOT_TOKEN or not user_id:
+        return
+    try:
+        body = urlencode({"chat_id": int(user_id), "text": text}).encode()
+        urlopen(Request(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data=body), timeout=4).read()
+    except Exception:
+        return
+
+
 @app.after_request
 def add_cors_headers(response):
     """Разрешает опубликованной MiniApp обращаться к отдельному API-сервису."""
@@ -195,6 +206,7 @@ def create_listing():
         )
         connection.commit()
     notify_admins(f"Новая услуга на модерации\n\n{title}\nКатегория: {category}\nЦена: {price} ₽\nАвтор: {user_id}")
+    notify_user(user_id, f"Ваша услуга «{title}» отправлена на модерацию LTeam. После проверки она появится в каталоге.")
     return jsonify({"ok": True, "listing_id": cursor.lastrowid, "status": "pending"}), 201
 
 
@@ -244,6 +256,7 @@ def create_order():
         )
         connection.commit()
     notify_admins(f"Новый заказ на модерации\n\n{title}\nКатегория: {category}\nБюджет: до {budget} ₽\nАвтор: {user_id}")
+    notify_user(user_id, f"Заказ «{title}» отправлен на модерацию LTeam. Мы напишем, когда он станет доступен исполнителям.")
     return jsonify({"ok": True, "order_id": cursor.lastrowid, "status": "moderation"}), 201
 
 
@@ -273,6 +286,7 @@ def create_order_application(order_id: int):
             ON CONFLICT(order_id, executor_id) DO UPDATE SET price=excluded.price, deadline=excluded.deadline, comment=excluded.comment, status='new', updated_at=excluded.updated_at""",
             (order_id, user_id, order["customer_id"], price, deadline, comment, now, now, "будет запрошен при выводе"))
         connection.commit()
+    notify_user(int(order["customer_id"]), "На ваш заказ появился новый отклик. Откройте «Мои заказы» в LTeam, чтобы посмотреть предложение.")
     return jsonify({"ok": True, "status": "new"}), 201
 
 
@@ -352,6 +366,8 @@ def accept_order_application(order_id: int, application_id: int):
         connection.execute("UPDATE order_applications SET status=CASE WHEN id=? THEN 'accepted' ELSE 'declined' END, updated_at=? WHERE order_id=?", (application_id, now, order_id))
         connection.commit()
     notify_admins(f"Новая сделка по заказу\n\n{order['title']}\nСумма: {amount} ₽\nЗаказчик: {user_id}\nИсполнитель: {application['executor_id']}\nСтатус: ожидает оплату")
+    notify_user(int(application["executor_id"]), f"Вас выбрали исполнителем для заказа «{order['title']}». Откройте «Мои заказы» в LTeam.")
+    notify_user(user_id, f"Исполнитель выбран для заказа «{order['title']}». Сделка ждёт оплаты через гаранта LTeam.")
     return jsonify({"ok": True, "deal_id": cursor.lastrowid, "status": "waiting_payment"}), 201
 
 

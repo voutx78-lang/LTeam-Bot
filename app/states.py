@@ -28,6 +28,7 @@ class CreateOrder(StatesGroup):
     budget = State()
     deadline = State()
     description = State()
+    reference_photo = State()
 
 
 class ReceiptState(StatesGroup):

@@ -1837,6 +1837,7 @@ async def setup_bot_commands():
     await bot.set_my_commands([
         BotCommand(command="start", description="🔄 Перезапустить бота"),
         BotCommand(command="menu", description="☰ Открыть меню"),
+        BotCommand(command="cancel", description="✖️ Отменить действие"),
         BotCommand(command="help", description="❓ Помощь"),
         BotCommand(command="rules", description="📜 Правила"),
     ])
@@ -2069,6 +2070,15 @@ async def send_home(message: Message):
 @dp.message(CommandStart())
 async def start(message: Message):
     save_user(message)
+    await send_home(message)
+
+
+@dp.message(Command("cancel"))
+async def command_cancel(message: Message, state: FSMContext):
+    """A universal escape hatch for an interrupted form or chat flow."""
+    await state.clear()
+    save_user(message)
+    await message.answer("Текущее действие отменено.")
     await send_home(message)
 
 

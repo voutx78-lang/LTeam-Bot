@@ -21,9 +21,12 @@ import "./OrdersWorkspace.css";
 import "./MarketplaceFix.css";
 import "./OrderCards.css";
 import "./FormPlatform.css";
+import "./OrderReference.css";
+import "./MyListingsWorkspace.css";
 import "./SellerProfile.css";
 import CatalogV3 from "./CatalogV3";
 import OrdersWorkspace from "./OrdersWorkspace";
+import MyListingsWorkspace from "./MyListingsWorkspace";
 
 const tg = window.Telegram?.WebApp;
 const API_BASE = import.meta.env.VITE_API_URL || "https://lteam-botminiapp.onrender.com";
@@ -43,13 +46,17 @@ async function apiFetch(path) {
 
 async function apiRequest(path, method, body) {
   const initData = telegramApp()?.initData || "";
+  const payload = path === "/api/orders" && body && !body.reference_image_data
+    ? { ...body, reference_image_data: sessionStorage.getItem("lteam-order-reference") || "" }
+    : body;
   const response = await fetch(`${API_BASE}${path}`, {
     method,
     headers: { "Content-Type": "application/json", ...(initData ? { "X-Telegram-Init-Data": initData } : {}) },
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.message || "Не удалось выполнить действие.");
+  if (path === "/api/orders" && response.ok) sessionStorage.removeItem("lteam-order-reference");
   return data;
 }
 
@@ -62,6 +69,10 @@ const demoListings = [
 const dealStages = ["Цена", "Оплата", "Работа", "Проверка", "Выплата"];
 
 function sendToBot(action, data = {}) {
+  if (action === "my_listings") {
+    window.dispatchEvent(new CustomEvent("lteam:navigate", { detail: "my-listings" }));
+    return;
+  }
   const payload = { action, ...data };
   if (telegramApp()?.sendData) telegramApp().sendData(JSON.stringify(payload));
   else console.info("MiniApp action", payload);
@@ -217,6 +228,18 @@ function ListingComposer({ initial, onSubmit, busy, message }) {
   return <section className="listing-composer"><div className="page-title"><div><p className="eyebrow">Новая услуга</p><h1>Разместить объявление</h1><span>Покажите работу, сроки и понятную цену.</span></div></div><form className="listing-form" onSubmit={(event) => { event.preventDefault(); if (!preview) { setError("Добавьте обложку услуги — это обязательно."); return; } setError(""); onSubmit({ ...form, image_data: preview, portfolio_data: portfolio }, () => { setForm(initial); setPreview(""); setPortfolio([]); }); }}><label className="listing-cover-upload">{preview ? <img src={preview} alt="Превью работы" /> : <><b>＋</b><span>Добавить обложку работы</span><small>Обязательна: JPG, PNG или WebP до 650 КБ</small></>}<input type="file" accept="image/*" onChange={selectImage} /></label><label className="portfolio-upload"><b>Портфолио <small>до 4 примеров, по желанию</small></b><div>{portfolio.map((image, index) => <button type="button" key={image} onClick={() => setPortfolio((current) => current.filter((_, i) => i !== index))}><img src={image} alt="" /><span>×</span></button>)}{portfolio.length < 4 && <label>＋<input type="file" accept="image/*" multiple onChange={selectPortfolio} /></label>}</div></label><label>Название услуги<input required value={form.title} onChange={(event) => update("title", event.target.value)} placeholder="Например, дизайн Telegram-канала" /></label><div className="form-split"><label>Категория<select value={form.category} onChange={(event) => update("category", event.target.value)}><option>Дизайн</option><option>Разработка</option><option>Тексты</option><option>Монтаж</option><option>Другое</option></select></label><label>Срок<select value={form.delivery_time} onChange={(event) => update("delivery_time", event.target.value)}><option>По договорённости</option><option>Сегодня</option><option>1–3 дня</option><option>До недели</option><option>Больше недели</option></select></label></div><label>Цена, ₽<input required inputMode="numeric" value={form.price} onChange={(event) => update("price", event.target.value)} placeholder="1500" /></label><label>Описание<textarea required minLength="5" value={form.description} onChange={(event) => update("description", event.target.value)} placeholder="Что получит покупатель, что входит в услугу и что нужно от него?" /></label><div className="form-tip"><Icon name="shield" /> Объявление проверит модератор LTeam перед публикацией.</div><button className="primary" type="submit" disabled={busy}>{busy ? "Отправляем…" : "Отправить на проверку"} <Icon name="arrow" /></button>{(error || message) && <p className="form-message">{error || message}</p>}</form></section>;
 }
 
+function OrderReferenceWidget() {
+  const [image, setImage] = useState(() => sessionStorage.getItem("lteam-order-reference") || "");
+  const choose = (event) => {
+    const file = event.target.files?.[0];
+    if (!file || !file.type.startsWith("image/") || file.size > 650000) return;
+    const reader = new FileReader();
+    reader.onload = () => { const value = String(reader.result || ""); sessionStorage.setItem("lteam-order-reference", value); setImage(value); };
+    reader.readAsDataURL(file);
+  };
+  return <section className="order-reference-widget"><div><b>Референс для исполнителя <small>необязательно</small></b><span>Приложите пример, скриншот или набросок желаемого результата.</span></div>{image ? <button type="button" className="reference-preview" onClick={() => { sessionStorage.removeItem("lteam-order-reference"); setImage(""); }}><img src={image} alt="Референс" /><i>×</i></button> : <label className="reference-add">＋<input type="file" accept="image/*" onChange={choose} /></label>}</section>;
+}
+
 export default function App() {
   const [tab, setTab] = useState("home");
   const [query, setQuery] = useState("");
@@ -276,6 +299,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const navigate = (event) => setTab(event.detail);
+    window.addEventListener("lteam:navigate", navigate);
+    return () => window.removeEventListener("lteam:navigate", navigate);
+  }, []);
+
+  useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("lteam-theme", theme);
     telegramApp()?.setHeaderColor?.(theme === "dark" || theme === "midnight" ? "#151525" : "#f7f8fc");
@@ -330,7 +359,9 @@ export default function App() {
     {tab === "create" && <ListingComposer initial={listingForm} message={formMessage} onSubmit={async (form, reset) => { setFormMessage(""); try { await apiRequest("/api/listings", "POST", form); setFormMessage("Объявление отправлено на проверку."); const clean = { title: "", category: "Дизайн", price: "", delivery_time: "По договорённости", description: "", image_data: "" }; setListingForm(clean); reset(); } catch (error) { setFormMessage(error.message); } }} />}
 
     {tab === "catalog" && <CatalogV3 items={catalogListings} orders={orderItems} favorites={favorites} onFavorite={toggleFavorite} onNavigate={setTab} request={apiRequest} fetchData={apiFetch} />}
+    {tab === "create-order" && <OrderReferenceWidget />}
     {tab === "orders" && <OrdersWorkspace orders={orderItems} deals={dealItems} profile={profile} fetchData={apiFetch} onNavigate={setTab} onChat={setChat} />}
+    {tab === "my-listings" && <MyListingsWorkspace fetchData={apiFetch} onNavigate={setTab} />}
     <nav className="bottom-nav">{navItems.map(([id, icon, label]) => <button className={tab === id ? "active" : ""} key={id} onClick={() => setTab(id)}><Icon name={icon} /><span>{label}</span></button>)}</nav>
     {settingsOpen && <SettingsSheet theme={theme} setTheme={setTheme} onClose={() => setSettingsOpen(false)} />}
     {toast && <div className="toast"><span>✓</span>{toast}</div>}

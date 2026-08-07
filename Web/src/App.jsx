@@ -16,8 +16,11 @@ import "./CatalogV3.css";
 import "./CatalogFix.css";
 import "./CatalogPolish.css";
 import "./Marketplace.css";
+import "./ListingComposer.css";
+import "./OrdersWorkspace.css";
 import "./SellerProfile.css";
 import CatalogV3 from "./CatalogV3";
+import OrdersWorkspace from "./OrdersWorkspace";
 
 const tg = window.Telegram?.WebApp;
 const API_BASE = import.meta.env.VITE_API_URL || "https://lteam-botminiapp.onrender.com";
@@ -184,6 +187,21 @@ function ChatSheet({ chat, currentUserId, onClose }) {
   return <div className="chat-sheet"><div className="sheet-backdrop" onClick={onClose} /><section className="chat-card"><header className="chat-header"><button className="round-button" onClick={onClose}>‹</button><div><p className="eyebrow">{chat.kind === "deal" ? "Безопасная сделка" : "Заказ"}</p><b>{chat.item.title || `Диалог #${chat.item.id}`}</b></div><span className="chat-secure">● защищён</span></header><div className="chat-notice">Переписка хранится в сделке. При споре гарант сможет помочь.</div><div className="messages">{messages.length ? messages.map((message) => <div className={Number(message.sender_id) === Number(currentUserId) ? "message mine" : "message"} key={message.id}><span>{message.text}</span><small>{String(message.created_at || "").slice(11, 16)}</small></div>) : <div className="chat-empty">Пока нет сообщений. Начните обсуждение условий.</div>}</div><form className="chat-compose" onSubmit={submit}><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Написать сообщение..." maxLength="1200" /><button type="submit" disabled={!draft.trim() || sending}>↑</button></form></section></div>
 }
 
+function ListingComposer({ initial, onSubmit, busy, message }) {
+  const [form, setForm] = useState(initial);
+  const [preview, setPreview] = useState(initial.image_data || "");
+  const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const selectImage = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/") || file.size > 650000) { event.target.value = ""; return; }
+    const reader = new FileReader();
+    reader.onload = () => { const image = String(reader.result || ""); setPreview(image); update("image_data", image); };
+    reader.readAsDataURL(file);
+  };
+  return <section className="listing-composer"><div className="page-title"><div><p className="eyebrow">Новая услуга</p><h1>Разместить объявление</h1><span>Покажите работу, сроки и понятную цену.</span></div></div><form className="listing-form" onSubmit={(event) => { event.preventDefault(); onSubmit(form, () => { setForm(initial); setPreview(""); }); }}><label className="listing-cover-upload">{preview ? <img src={preview} alt="Превью работы" /> : <><b>＋</b><span>Добавить обложку работы</span><small>JPG, PNG или WebP до 650 КБ</small></>}<input type="file" accept="image/*" onChange={selectImage} /></label><label>Название услуги<input required value={form.title} onChange={(event) => update("title", event.target.value)} placeholder="Например, дизайн Telegram-канала" /></label><div className="form-split"><label>Категория<select value={form.category} onChange={(event) => update("category", event.target.value)}><option>Дизайн</option><option>Разработка</option><option>Тексты</option><option>Монтаж</option><option>Другое</option></select></label><label>Срок<select value={form.delivery_time} onChange={(event) => update("delivery_time", event.target.value)}><option>По договорённости</option><option>Сегодня</option><option>1–3 дня</option><option>До недели</option><option>Больше недели</option></select></label></div><label>Цена, ₽<input required inputMode="numeric" value={form.price} onChange={(event) => update("price", event.target.value)} placeholder="1500" /></label><label>Описание<textarea required value={form.description} onChange={(event) => update("description", event.target.value)} placeholder="Что получит покупатель, что входит в услугу и что нужно от него?" /></label><div className="form-tip"><Icon name="shield" /> Объявление проверит модератор LTeam перед публикацией.</div><button className="primary" type="submit" disabled={busy}>{busy ? "Отправляем…" : "Отправить на проверку"} <Icon name="arrow" /></button>{message && <p className="form-message">{message}</p>}</form></section>;
+}
+
 export default function App() {
   const [tab, setTab] = useState("home");
   const [query, setQuery] = useState("");
@@ -200,7 +218,7 @@ export default function App() {
   const [chat, setChat] = useState(null);
   const [adminSummary, setAdminSummary] = useState({});
   const [balance, setBalance] = useState({ available: 0, frozen: 0 });
-  const [listingForm, setListingForm] = useState({ title: "", category: "Дизайн", price: "", description: "" });
+  const [listingForm, setListingForm] = useState({ title: "", category: "Дизайн", price: "", delivery_time: "По договорённости", description: "", image_data: "" });
   const [orderForm, setOrderForm] = useState({ title: "", category: "Разработка", budget: "", deadline: "По договорённости", description: "" });
   const [formMessage, setFormMessage] = useState("");
   const [profile, setProfile] = useState({ name: tg?.initDataUnsafe?.user?.first_name || "Гость", username: tg?.initDataUnsafe?.user?.username ? `@${tg.initDataUnsafe.user.username}` : "LTeam user" });
@@ -294,9 +312,10 @@ export default function App() {
 
     {tab === "profile" && <section><div className="profile-card"><span className="avatar large">{profile.name.slice(0, 1).toUpperCase()}</span><div><p className="eyebrow">Профиль LTeam</p><h1>{profile.name}</h1><span>{profile.username}</span><small className={`sync-status ${isSynced ? "online" : "offline"}`}>{isSynced ? "● Синхронизирован с ботом" : "○ Требуется синхронизация с ботом"}</small></div><button className="round-button" onClick={() => setSettingsOpen(true)}>⚙</button></div><div className="profile-stats"><div><b>{orderItems.length}</b><span>Заказов</span></div><div><b>{dealItems.length}</b><span>Сделок</span></div><div><b>{catalogListings.filter((item) => Number(item.seller_id) === Number(profile.id)).length}</b><span>Услуг</span></div></div><div className="settings-list"><button onClick={() => sendToBot("my_listings")}><Icon name="orders" /><span>Мои объявления</span><Icon name="arrow" /></button><button onClick={() => setToast(favorites.length ? `В избранном: ${favorites.length}` : "В избранном пока ничего нет")}><Icon name="star" /><span>Избранное</span><Icon name="arrow" /></button><button onClick={() => sendToBot("support")}><Icon name="chat" /><span>Поддержка</span><Icon name="arrow" /></button></div>{isAdmin && <AdminPanel summary={adminSummary} />}</section>}
 
-    {tab === "create" && <section><div className="page-title"><div><p className="eyebrow">Новая услуга</p><h1>Разместить объявление</h1></div></div><form className="listing-form" onSubmit={async (event) => { event.preventDefault(); setFormMessage(""); try { await apiRequest("/api/listings", "POST", listingForm); setFormMessage("Объявление отправлено на проверку."); setListingForm({ title: "", category: "Дизайн", price: "", description: "" }); } catch (error) { setFormMessage(error.message); } }}><label>Название<input required value={listingForm.title} onChange={(event) => setListingForm({ ...listingForm, title: event.target.value })} placeholder="Например, дизайн Telegram-канала" /></label><label>Категория<select value={listingForm.category} onChange={(event) => setListingForm({ ...listingForm, category: event.target.value })}><option>Дизайн</option><option>Разработка</option><option>Тексты</option><option>Монтаж</option><option>Другое</option></select></label><label>Цена, ₽<input required inputMode="numeric" value={listingForm.price} onChange={(event) => setListingForm({ ...listingForm, price: event.target.value })} placeholder="1500" /></label><label>Описание<textarea required value={listingForm.description} onChange={(event) => setListingForm({ ...listingForm, description: event.target.value })} placeholder="Расскажите, что получит покупатель" /></label><button className="primary" type="submit">Отправить на проверку <Icon name="arrow" /></button>{formMessage && <p className="form-message">{formMessage}</p>}</form></section>}
+    {tab === "create" && <ListingComposer initial={listingForm} message={formMessage} onSubmit={async (form, reset) => { setFormMessage(""); try { await apiRequest("/api/listings", "POST", form); setFormMessage("Объявление отправлено на проверку."); const clean = { title: "", category: "Дизайн", price: "", delivery_time: "По договорённости", description: "", image_data: "" }; setListingForm(clean); reset(); } catch (error) { setFormMessage(error.message); } }} />}
 
     {tab === "catalog" && <CatalogV3 items={catalogListings} orders={orderItems} favorites={favorites} onFavorite={toggleFavorite} onNavigate={setTab} request={apiRequest} fetchData={apiFetch} />}
+    {tab === "orders" && <OrdersWorkspace orders={orderItems} deals={dealItems} profile={profile} fetchData={apiFetch} onNavigate={setTab} onChat={setChat} />}
     <nav className="bottom-nav">{navItems.map(([id, icon, label]) => <button className={tab === id ? "active" : ""} key={id} onClick={() => setTab(id)}><Icon name={icon} /><span>{label}</span></button>)}</nav>
     {settingsOpen && <SettingsSheet theme={theme} setTheme={setTheme} onClose={() => setSettingsOpen(false)} />}
     {toast && <div className="toast"><span>✓</span>{toast}</div>}

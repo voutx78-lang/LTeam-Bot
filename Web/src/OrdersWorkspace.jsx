@@ -10,6 +10,7 @@ export default function OrdersWorkspace({ orders = [], deals = [], profile, fetc
   const [selectedTask, setSelectedTask] = useState(null);
   const [taskApplications, setTaskApplications] = useState([]);
   const [choosing, setChoosing] = useState(false);
+  const [reviewDeal, setReviewDeal] = useState(null);
   const ownOrders = useMemo(() => orders.filter((order) => Number(order.customer_id) === Number(profile?.id)), [orders, profile]);
 
   useEffect(() => {
@@ -27,13 +28,20 @@ export default function OrdersWorkspace({ orders = [], deals = [], profile, fetc
         {!active.length && <div className="orders-empty"><b>{view === "tasks" ? "Нет созданных задач" : view === "responses" ? "Откликов пока нет" : "Сделок пока нет"}</b><span>{view === "tasks" ? "Создайте заказ — исполнители смогут откликнуться." : "Здесь появится история работы на LTeam."}</span>{view === "tasks" && <button onClick={() => onNavigate("create-order")}>Создать заказ</button>}</div>}
         {view === "tasks" && active.map((order) => <TaskRow key={order.id} order={order} onOpen={() => onChat({ kind: "order", item: order })} onApplications={async () => { try { const data = await fetchData(`/api/orders/${order.id}/applications`); setTaskApplications(data); setSelectedTask(order); } catch { setNotice("Не удалось загрузить отклики."); } }} />)}
         {view === "responses" && active.map((application) => <ApplicationRow key={application.id} item={application} onOpen={() => onChat({ kind: "order", item: { id: application.order_id, title: application.title } })} />)}
-        {view === "deals" && active.map((deal) => <DealRow key={deal.id} deal={deal} onOpen={() => onChat({ kind: "deal", item: deal })} />)}
+        {view === "deals" && active.map((deal) => <DealRow key={deal.id} deal={deal} onOpen={() => onChat({ kind: "deal", item: deal })} onReview={Number(deal.buyer_id) === Number(profile?.id) && deal.status === "completed" ? () => setReviewDeal(deal) : null} />)}
       </section>
     </main>
     {notice && <button className="market-notice" onClick={() => setNotice("")}>{notice}<span>×</span></button>}
-    {selectedTask && <ApplicantsSheet order={selectedTask} applications={taskApplications} onClose={() => setSelectedTask(null)} onChoose={async (application) => { if (choosing) return; setChoosing(true); try { const data = await request(`/api/orders/${selectedTask.id}/applications/${application.id}/accept`, "POST", {}); setNotice(`Исполнитель выбран. Сделка #${data.deal_id} ожидает оплату через гаранта.`); setSelectedTask(null); } catch (error) { setNotice(error?.message || "Не удалось выбрать исполнителя."); } finally { setChoosing(false); } }} choosing={choosing} />}
+    {selectedTask && <ApplicantsSheet order={selectedTask} applications={taskApplications} onClose={() => setSelectedTask(null)} onChoose={async (application) => { if (choosing) return; setChoosing(true); try { const data = await request(`/api/orders/${selectedTask.id}/applications/${application.id}/accept`, "POST", {}); setNotice(`Исполнитель выбран. Сделка #${data.deal_id} открыта для согласования деталей.`); setSelectedTask(null); } catch (error) { setNotice(error?.message || "Не удалось выбрать исполнителя."); } finally { setChoosing(false); } }} choosing={choosing} />}
+    {reviewDeal && <ReviewSheet deal={reviewDeal} request={request} onClose={() => setReviewDeal(null)} onDone={() => { setNotice("Спасибо! Отзыв опубликован в профиле исполнителя."); setReviewDeal(null); }} />}
     <nav className="market-dock"><button onClick={() => onNavigate("home")}>⌂<span>Главная</span></button><button onClick={() => onNavigate("catalog")}>▦<span>Маркет</span></button><button className="active">▤<span>Мои заказы</span></button><button onClick={() => onNavigate("profile")}>♙<span>Профиль</span></button></nav>
   </section>;
+}
+
+function ReviewSheet({ deal, request, onClose, onDone }) {
+  const [rating, setRating] = useState(5); const [text, setText] = useState(""); const [error, setError] = useState("");
+  const submit = async (event) => { event.preventDefault(); try { await request(`/api/deals/${deal.id}/review`, "POST", { rating, text }); onDone(); } catch (err) { setError(err?.message || "Не удалось опубликовать отзыв."); } };
+  return <div className="review-backdrop" onMouseDown={onClose}><form className="review-sheet" onMouseDown={(event) => event.stopPropagation()} onSubmit={submit}><div className="sheet-handle" /><button type="button" className="review-close" onClick={onClose}>×</button><p>ЗАВЕРШЁННАЯ СДЕЛКА</p><h2>Как прошла работа?</h2><span>Ваша оценка появится в профиле исполнителя.</span><div className="rating-pick">{[1,2,3,4,5].map((value) => <button key={value} type="button" className={value <= rating ? "active" : ""} onClick={() => setRating(value)}>★</button>)}</div><textarea required minLength="3" value={text} onChange={(event) => setText(event.target.value)} placeholder="Коротко опишите опыт работы" /><button className="review-submit">Опубликовать отзыв</button>{error && <small className="review-error">{error}</small>}</form></div>;
 }
 
 function ApplicantsSheet({ order, applications, onClose, onChoose, choosing }) {
@@ -49,7 +57,20 @@ function ApplicationRow({ item, onOpen }) {
   return <article className="work-row application-row"><div className="work-row-head"><span className="work-status">{item.status === "new" ? "Отправлен" : item.status}</span><small>{item.category || "Заказ"}</small></div><h3>{titleFor(item)}</h3><p>{item.comment || "Ваш отклик"}</p><div className="work-meta"><b>ваша цена {money(item.price)}</b><span>◷ {item.deadline || "Срок обсуждается"}</span></div><footer><span className="work-client">Заказчик: {item.customer_name || item.customer_username || "LTeam"}</span><button className="work-primary" onClick={onOpen}>Чат</button></footer></article>;
 }
 
-function DealRow({ deal, onOpen }) {
-  const label = { waiting_payment: "Ожидаем оплату", in_progress: "В работе", checking: "Проверка", completed: "Завершена" }[deal.status] || "Сделка";
-  return <article className="work-row deal-row"><div className="work-row-head"><span className="work-status active">{label}</span><small>Гарант LTeam</small></div><h3>{titleFor(deal)}</h3><div className="work-meta"><b>{money(deal.amount)}</b><span>Безопасная сделка</span></div><footer><span className="work-client">Все сообщения сохранены в сделке</span><button className="work-primary" onClick={onOpen}>Чат сделки</button></footer></article>;
+function DealRow({ deal, onOpen, onReview }) {
+  const label = {
+    discussion: "Согласование деталей",
+    waiting_final_price: "Ожидаем цену",
+    waiting_buyer_price_confirm: "Подтвердите цену",
+    waiting_admin_payment_approval: "Проверка администратором",
+    waiting_payment: "Ожидаем оплату",
+    waiting_receipt: "Проверяем оплату",
+    waiting_admin_confirm: "Проверяем оплату",
+    in_work: "В работе",
+    waiting_buyer_confirm: "Ожидаем подтверждение",
+    dispute_open: "Открыт спор",
+    completed: "Завершена",
+    cancelled: "Отменена",
+  }[deal.status] || "Сделка";
+  return <article className="work-row deal-row"><div className="work-row-head"><span className="work-status active">{label}</span><small>Гарант LTeam</small></div><h3>{titleFor(deal)}</h3><div className="work-meta"><b>{money(deal.amount)}</b><span>Безопасная сделка</span></div><footer><span className="work-client">Все сообщения сохранены в сделке</span><div className="deal-row-actions">{onReview && <button className="work-review" onClick={onReview}>Отзыв</button>}<button className="work-primary" onClick={onOpen}>Чат сделки</button></div></footer></article>;
 }

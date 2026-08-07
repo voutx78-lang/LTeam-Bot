@@ -232,6 +232,36 @@ def my_listings():
     return jsonify([dict(row) for row in rows])
 
 
+@app.get("/api/applications/mine")
+def my_applications():
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    with db() as connection:
+        rows = connection.execute("""SELECT a.id, a.order_id, a.price, a.deadline, a.comment, a.status, a.created_at,
+            o.title, o.category, o.budget, COALESCE(u.username, '') AS customer_username, COALESCE(u.display_name, '') AS customer_name
+            FROM order_applications a JOIN orders o ON o.id=a.order_id
+            LEFT JOIN users u ON u.user_id=a.customer_id
+            WHERE a.executor_id=? ORDER BY a.id DESC LIMIT 100""", (user_id,)).fetchall()
+    return jsonify([dict(row) for row in rows])
+
+
+@app.get("/api/orders/<int:order_id>/applications")
+def order_applications(order_id: int):
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    with db() as connection:
+        order = connection.execute("SELECT customer_id FROM orders WHERE id=?", (order_id,)).fetchone()
+        if not order or int(order["customer_id"]) != user_id:
+            return jsonify({"error": "forbidden"}), 403
+        rows = connection.execute("""SELECT a.id, a.executor_id, a.price, a.deadline, a.comment, a.status, a.created_at,
+            COALESCE(u.username, '') AS executor_username, COALESCE(u.display_name, '') AS executor_name
+            FROM order_applications a LEFT JOIN users u ON u.user_id=a.executor_id
+            WHERE a.order_id=? ORDER BY a.id DESC""", (order_id,)).fetchall()
+    return jsonify([dict(row) for row in rows])
+
+
 def can_access_order(connection: sqlite3.Connection, order_id: int, user_id: int) -> bool:
     order = connection.execute("SELECT customer_id, executor_id FROM orders WHERE id=?", (order_id,)).fetchone()
     if not order:

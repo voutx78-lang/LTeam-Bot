@@ -1,0 +1,11 @@
+import { useEffect, useState } from "react";
+
+const money = (value) => `${Number(value || 0).toLocaleString("ru-RU")} ₽`;
+const status = { active: ["Опубликовано", "ok"], pending: ["На модерации", "wait"], moderation: ["На модерации", "wait"], rejected: ["Отклонено", "bad"], paused: ["Скрыто", "muted"] };
+
+export default function MyListingsWorkspace({ fetchData, onNavigate }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => { fetchData("/api/listings/mine").then(setItems).catch(() => setItems([])).finally(() => setLoading(false)); }, [fetchData]);
+  return <section className="my-publications marketplace-shell"><header className="market-topbar"><button className="market-brand" onClick={() => onNavigate("profile")}><i>LT</i><b>Мои услуги</b></button><button className="market-create" onClick={() => onNavigate("create")}>+ Услуга</button></header><main className="publications-content"><div className="market-heading"><p className="market-eyebrow">ЛИЧНАЯ ВИТРИНА</p><h1>Мои публикации</h1><span>Следите за модерацией и управляйте услугами.</span></div>{loading ? <div className="publications-empty">Загружаем публикации…</div> : !items.length ? <div className="publications-empty"><b>Услуг пока нет</b><span>Создайте первую услугу и покажите её покупателям.</span><button onClick={() => onNavigate("create")}>Разместить услугу</button></div> : <div className="publications-list">{items.map((item) => { const [label, tone] = status[item.status] || [item.status || "Статус", "muted"]; return <article key={item.id}><div className="publication-cover">{item.image_data ? <img src={item.image_data} alt="" /> : "LT"}</div><div><span className={`publication-status ${tone}`}>{label}</span><h3>{item.title}</h3><p>{item.category} · {money(item.price)}</p><small>{item.description || "Без описания"}</small></div><button onClick={() => onNavigate("catalog")}>Открыть ›</button></article>; })}</div>}</main><nav className="market-dock"><button onClick={() => onNavigate("home")}>⌂<span>Главная</span></button><button onClick={() => onNavigate("catalog")}>▦<span>Маркет</span></button><button onClick={() => onNavigate("orders")}>▤<span>Мои заказы</span></button><button className="active" onClick={() => onNavigate("profile")}>♙<span>Профиль</span></button></nav></section>;
+}

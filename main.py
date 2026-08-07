@@ -18,6 +18,7 @@ from aiogram.types import (
     BotCommand,
     ReplyKeyboardMarkup,
     KeyboardButton,
+    ErrorEvent,
 )
 
 load_dotenv()  # Эта строка обязательна, она загрузит переменные из .env
@@ -13205,6 +13206,31 @@ async def profile_payouts(call: CallbackQuery):
 # ===== ЗАПУСК =====
 
 import asyncio
+
+
+@dp.error()
+async def handle_unexpected_update_error(event: ErrorEvent) -> bool:
+    """Keep a single failed user action from leaving the bot silent or stopping polling."""
+    update = event.update
+    error_name = type(event.exception).__name__
+    print(f"[LTeam] update handled safely after {error_name}: {event.exception}")
+
+    try:
+        if update.callback_query:
+            await update.callback_query.answer(
+                "Не получилось выполнить действие. Попробуйте ещё раз.",
+                show_alert=True,
+            )
+        elif update.message:
+            await update.message.answer(
+                "Не получилось выполнить действие. Вернитесь в меню и попробуйте ещё раз.",
+                reply_markup=main_menu(update.message.from_user.id),
+            )
+    except Exception:
+        # The original error is already printed above; never re-raise from the recovery path.
+        pass
+    return True
+
 
 async def main():
     if not BOT_TOKEN:

@@ -327,6 +327,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const refreshMarketplace = () => {
+      apiFetch("/api/listings").then((items) => setCatalogListings(items.map((item) => ({ ...item, seller: "Исполнитель LTeam", rating: "—", orders: 0, accent: "bot" })))).catch(() => {});
+      apiFetch("/api/orders").then(setOrderItems).catch(() => {});
+      apiFetch("/api/deals").then(setDealItems).catch(() => {});
+      apiFetch("/api/balance").then(setBalance).catch(() => {});
+    };
+    const timer = window.setInterval(refreshMarketplace, 30000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("lteam-theme", theme);
     telegramApp()?.setHeaderColor?.(theme === "dark" || theme === "midnight" ? "#151525" : "#f7f8fc");

@@ -160,11 +160,13 @@ function ServiceCard({ item, favorites, onFavorite, onDetail, onProfile }) {
 }
 
 function OrderCard({ item, onDetail }) {
+  const client = item.customer_name || item.customer_username || "Заказчик LTeam";
   return <article className="market-card order-card">
-    <div className="order-card-top"><span>{item.category || "Заказ"}</span><strong>{price(item.budget, "до ")}</strong></div>
-    <h3>{item.title}</h3><p>{item.description || "Описание заказа появится здесь."}</p>
-    <div className="order-client"><Avatar name={item.customer_name || item.customer_username || "Заказчик"} /><span><b>{item.customer_name || item.customer_username || "Заказчик LTeam"}</b><small>@{item.customer_username || "lteam_user"}</small></span></div>
-    <footer><span>◷ {item.deadline || "Срок обсуждается"}</span><button type="button" onClick={onDetail}>Откликнуться</button></footer>
+    <div className="order-card-top"><span className="order-seeking">Ищу исполнителя</span><strong>{price(item.budget, "до ")}</strong></div>
+    <button type="button" className="order-title" onClick={onDetail}>{item.title}</button>
+    {item.description && <p className="order-description">{item.description}</p>}
+    <div className="order-client"><Avatar name={client} image={item.customer_avatar_url} /><span><b>{client}</b><small>@{item.customer_username || "lteam_user"}</small></span></div>
+    <footer><div className="order-tags"><span>{item.category || "Заказ"}</span><span>◷ {item.deadline || "Срок обсуждается"}</span></div><button type="button" onClick={onDetail}>Откликнуться</button></footer>
   </article>;
 }
 

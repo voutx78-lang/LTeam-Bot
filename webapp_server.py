@@ -92,6 +92,17 @@ def current_user_id() -> int | None:
     return int(user["id"]) if user.get("id") else None
 
 
+@app.get("/api/health")
+def health_check():
+    """Small non-sensitive readiness check for Render and future monitoring."""
+    try:
+        with db() as connection:
+            connection.execute("SELECT 1").fetchone()
+        return jsonify({"ok": True, "storage": "cloud_snapshot" if os.getenv("DATABASE_URL") else "local"})
+    except Exception:
+        return jsonify({"ok": False}), 503
+
+
 def require_user() -> int:
     user_id = current_user_id()
     if not user_id:

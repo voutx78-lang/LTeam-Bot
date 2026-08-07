@@ -2043,25 +2043,26 @@ async def send_home(message: Message):
 
     text += channel_promo_text("home")
 
+    banner_sent = False
     if os.path.exists(BANNER_PATH):
-        await message.answer_photo(
-            FSInputFile(BANNER_PATH),
-            caption=text,
-            reply_markup=home_market_keyboard(),
-            parse_mode="HTML",
-        )
-        await set_reply_menu_hint_for_message(
-            message,
-            lteam_reply_menu(message.from_user.id),
-            text="⬇️ Основные разделы доступны в нижнем меню.",
-        )
-    else:
+        try:
+            await message.answer_photo(
+                FSInputFile(BANNER_PATH),
+                caption=text,
+                reply_markup=home_market_keyboard(),
+                parse_mode="HTML",
+            )
+            banner_sent = True
+        except Exception:
+            # A damaged or oversized banner should never make /start unusable.
+            banner_sent = False
+    if not banner_sent:
         await screen_answer(message, text, reply_markup=home_market_keyboard(), parse_mode="HTML")
-        await set_reply_menu_hint_for_message(
-            message,
-            lteam_reply_menu(message.from_user.id),
-            text="⬇️ Основные разделы доступны в нижнем меню.",
-        )
+    await set_reply_menu_hint_for_message(
+        message,
+        lteam_reply_menu(message.from_user.id),
+        text="⬇️ Основные разделы доступны в нижнем меню.",
+    )
 
 
 @dp.message(CommandStart())
@@ -13223,7 +13224,7 @@ async def main():
         if WEBAPP_URL.startswith("https://"):
             await bot.set_chat_menu_button(
                 menu_button=MenuButtonWebApp(
-                    text="Open LTeam Market",
+                    text="LTeam Market",
                     web_app=WebAppInfo(url=WEBAPP_URL),
                 )
             )

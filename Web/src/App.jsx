@@ -6,6 +6,7 @@ import "./Interactions.css";
 import "./Experience.css";
 import "./Status.css";
 import "./Chat.css";
+import "./ChatModern.css";
 import "./Brand.css";
 import "./Home.css";
 import "./HomeRefine.css";
@@ -30,14 +31,23 @@ import MyListingsWorkspace from "./MyListingsWorkspace";
 import AdminWorkspace from "./AdminWorkspace";
 import WalletWorkspace from "./WalletWorkspace";
 import FavoritesWorkspace from "./FavoritesWorkspace";
+import SupportWorkspace from "./SupportWorkspace";
+import SettingsWorkspace from "./SettingsWorkspace";
+import ProfileWorkspace from "./ProfileWorkspace";
 import OrderComposer from "./OrderComposer";
 import "./OrderComposer.css";
 import "./SellerProfileExtra.css";
 import "./ApplicantsSheet.css";
 import "./AdminWorkspace.css";
+import "./AdminModeration.css";
 import "./WalletWorkspace.css";
 import "./WalletOverlay.css";
 import "./FavoritesWorkspace.css";
+import "./SupportWorkspace.css";
+import "./SettingsWorkspace.css";
+import "./ProfileWorkspace.css";
+import "./ReviewCards.css";
+import "./ReviewSheet.css";
 
 const tg = window.Telegram?.WebApp;
 const API_BASE = import.meta.env.VITE_API_URL || "https://lteam-botminiapp.onrender.com";
@@ -366,20 +376,22 @@ export default function App() {
 
     {tab === "wallet" && <section><div className="page-title"><div><p className="eyebrow">Финансы</p><h1>Баланс</h1></div><button className="round-button" onClick={() => sendToBot("balance_history")}><Icon name="orders" /></button></div><div className="balance-card"><p>Доступно к выводу</p><h2>{Number(balance.available || 0).toLocaleString("ru-RU")} ₽</h2><span>В обработке у гаранта: {Number(balance.frozen || 0).toLocaleString("ru-RU")} ₽</span><button className="primary" onClick={() => sendToBot("withdraw_start")}>Вывести средства <Icon name="arrow" /></button></div><div className="list-row"><span className="list-icon mint"><Icon name="wallet" /></span><div><b>История операций</b><small>Пополнения, сделки и выплаты</small></div><Icon name="arrow" /></div></section>}
 
-    {tab === "profile" && <section><div className="profile-card"><span className="avatar large">{profile.name.slice(0, 1).toUpperCase()}</span><div><p className="eyebrow">Профиль LTeam</p><h1>{profile.name}</h1><span>{profile.username}</span><small className={`sync-status ${isSynced ? "online" : "offline"}`}>{isSynced ? "● Синхронизирован с ботом" : "○ Требуется синхронизация с ботом"}</small></div><button className="round-button" onClick={() => setSettingsOpen(true)}>⚙</button></div><div className="profile-stats"><div><b>{orderItems.length}</b><span>Заказов</span></div><div><b>{dealItems.length}</b><span>Сделок</span></div><div><b>{catalogListings.filter((item) => Number(item.seller_id) === Number(profile.id)).length}</b><span>Услуг</span></div></div><div className="settings-list"><button onClick={() => sendToBot("my_listings")}><Icon name="orders" /><span>Мои объявления</span><Icon name="arrow" /></button><button onClick={() => setTab("favorites")}><Icon name="star" /><span>Избранное</span><Icon name="arrow" /></button><button onClick={() => sendToBot("support")}><Icon name="chat" /><span>Поддержка</span><Icon name="arrow" /></button></div>{isAdmin && <AdminPanel summary={adminSummary} onOpen={() => setTab("admin")} />}</section>}
+    {tab === "profile" && <section><div className="profile-card"><span className="avatar large">{profile.name.slice(0, 1).toUpperCase()}</span><div><p className="eyebrow">Профиль LTeam</p><h1>{profile.name}</h1><span>{profile.username}</span><small className={`sync-status ${isSynced ? "online" : "offline"}`}>{isSynced ? "● Синхронизирован с ботом" : "○ Требуется синхронизация с ботом"}</small></div><button className="round-button" onClick={() => setSettingsOpen(true)}>⚙</button></div><div className="profile-stats"><div><b>{orderItems.length}</b><span>Заказов</span></div><div><b>{dealItems.length}</b><span>Сделок</span></div><div><b>{catalogListings.filter((item) => Number(item.seller_id) === Number(profile.id)).length}</b><span>Услуг</span></div></div><div className="settings-list"><button onClick={() => sendToBot("my_listings")}><Icon name="orders" /><span>Мои объявления</span><Icon name="arrow" /></button><button onClick={() => setTab("favorites")}><Icon name="star" /><span>Избранное</span><Icon name="arrow" /></button><button onClick={() => setTab("support")}><Icon name="chat" /><span>Поддержка</span><Icon name="arrow" /></button></div>{isAdmin && <AdminPanel summary={adminSummary} onOpen={() => setTab("admin")} />}</section>}
 
     {tab === "create" && <ListingComposer initial={listingForm} message={formMessage} onSubmit={async (form, reset) => { setFormMessage(""); try { await apiRequest("/api/listings", "POST", form); setFormMessage("Объявление отправлено на проверку."); const clean = { title: "", category: "Дизайн", price: "", delivery_time: "По договорённости", description: "", image_data: "" }; setListingForm(clean); reset(); } catch (error) { setFormMessage(error.message); } }} />}
 
-    {tab === "catalog" && <CatalogV3 items={catalogListings} orders={orderItems} favorites={favorites} onFavorite={toggleFavorite} onNavigate={setTab} request={apiRequest} fetchData={apiFetch} />}
+    {tab === "catalog" && <CatalogV3 items={catalogListings} orders={orderItems} favorites={favorites} onFavorite={toggleFavorite} onNavigate={setTab} onStartServiceRequest={(listing_id) => sendToBot("ask_seller", { listing_id })} request={apiRequest} fetchData={apiFetch} />}
     {tab === "create-order" && <OrderReferenceWidget />}
     {tab === "create-order" && <OrderComposer initial={{ title: "", category: "Разработка", budget: "", deadline: "По договорённости", description: "" }} onClose={() => setTab("orders")} message={formMessage} onSubmit={async (form, reset) => { setFormMessage(""); try { const result = await apiRequest("/api/orders", "POST", form); setOrderItems((items) => [{ ...form, id: result.order_id, status: "moderation" }, ...items]); setFormMessage("Заказ отправлен на модерацию. Администраторы получили уведомление."); reset(); } catch (error) { setFormMessage(error.message); } }} />}
     {tab === "orders" && <OrdersWorkspace orders={orderItems} deals={dealItems} profile={profile} fetchData={apiFetch} request={apiRequest} onNavigate={setTab} onChat={setChat} />}
     {tab === "my-listings" && <MyListingsWorkspace fetchData={apiFetch} onNavigate={setTab} />}
-    {isAdmin && tab === "admin" && <AdminWorkspace summary={adminSummary} onNavigate={setTab} onOpenBot={(section) => section === "admin_panel" ? sendToBot("admin_panel") : sendToBot("admin_open", { section })} />}
+    {isAdmin && tab === "admin" && <AdminWorkspace summary={adminSummary} fetchData={apiFetch} request={apiRequest} onNavigate={setTab} onOpenBot={(section) => section === "admin_panel" ? sendToBot("admin_panel") : sendToBot("admin_open", { section })} />}
     {tab === "wallet" && <WalletWorkspace balance={balance} fetchData={apiFetch} onNavigate={setTab} onWithdraw={() => sendToBot("withdraw_start")} />}
     {tab === "favorites" && <FavoritesWorkspace items={catalogListings} favorites={favorites} onToggle={toggleFavorite} onNavigate={setTab} />}
+    {tab === "support" && <SupportWorkspace fetchData={apiFetch} request={apiRequest} onNavigate={setTab} />}
+    {tab === "profile" && <ProfileWorkspace profile={profile} listings={catalogListings} orders={orderItems} deals={dealItems} balance={balance} isSynced={isSynced} isAdmin={isAdmin} onNavigate={setTab} onSettings={() => setSettingsOpen(true)} />}
     <nav className="bottom-nav">{navItems.map(([id, icon, label]) => <button className={tab === id ? "active" : ""} key={id} onClick={() => setTab(id)}><Icon name={icon} /><span>{label}</span></button>)}</nav>
-    {settingsOpen && <SettingsSheet theme={theme} setTheme={setTheme} onClose={() => setSettingsOpen(false)} />}
+    {settingsOpen && <SettingsWorkspace theme={theme} setTheme={setTheme} onClose={() => setSettingsOpen(false)} />}
     {toast && <div className="toast"><span>✓</span>{toast}</div>}
     {chat && <ChatSheet chat={chat} currentUserId={profile.id} onClose={() => setChat(null)} />}
   </main>;

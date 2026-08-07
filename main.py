@@ -2,6 +2,7 @@ import os
 import sqlite3
 import html
 import re
+import json
 from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
@@ -2067,6 +2068,45 @@ async def send_home(message: Message):
 async def start(message: Message):
     save_user(message)
     await send_home(message)
+
+
+@dp.message(F.web_app_data)
+async def handle_miniapp_action(message: Message, state: FSMContext):
+    """Route MiniApp actions back into the existing Telegram bot flows."""
+    save_user(message)
+    try:
+        payload = json.loads(message.web_app_data.data or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return
+
+    action = str(payload.get("action", ""))
+    if action == "withdraw_start":
+        await message.answer(
+            "Вывод средств открывается в защищённом сценарии бота.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="Открыть вывод", callback_data="withdraw_start")
+            ]]),
+        )
+        return
+
+    if action == "admin_open":
+        if not is_admin(message.from_user.id):
+            await message.answer("Этот раздел доступен только администраторам.")
+            return
+        section = str(payload.get("section", ""))
+        sections = {
+            "payments": ("Оплаты на проверке", "admin_deals_payments"),
+            "payouts": ("Выплаты", "admin_deals_payouts"),
+            "disputes": ("Споры", "admin_disputes"),
+            "panel": ("Админ-панель", "admin_panel"),
+        }
+        title, callback = sections.get(section, sections["panel"])
+        await message.answer(
+            f"{title} открываются в боте.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text=title, callback_data=callback)
+            ]]),
+        )
 
 
 @dp.message(Command("menu"))

@@ -162,6 +162,11 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+        try:
+            cur.execute("ALTER TABLE orders ADD COLUMN reference_image_data TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
+
         cur.execute("""
         CREATE TABLE IF NOT EXISTS user_screens (
             user_id INTEGER PRIMARY KEY,

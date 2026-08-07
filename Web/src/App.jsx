@@ -19,6 +19,7 @@ import "./Marketplace.css";
 import "./ListingComposer.css";
 import "./OrdersWorkspace.css";
 import "./MarketplaceFix.css";
+import "./OrderCards.css";
 import "./SellerProfile.css";
 import CatalogV3 from "./CatalogV3";
 import OrdersWorkspace from "./OrdersWorkspace";

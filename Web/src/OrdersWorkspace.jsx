@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import "./DealActions.css";
 
 const money = (value) => `${Number(value || 0).toLocaleString("ru-RU")} ₽`;
 const titleFor = (item) => item.title || "Заказ LTeam";

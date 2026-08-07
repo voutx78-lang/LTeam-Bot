@@ -46,7 +46,7 @@ function Picker({ label, value, options, onChange, open, setOpen }) {
   </div>;
 }
 
-export default function CatalogV3({ items = [], orders = [], favorites = [], onFavorite, onNavigate, request, fetchData }) {
+export default function CatalogV3({ items = [], orders = [], favorites = [], onFavorite, onNavigate, onStartServiceRequest, request, fetchData }) {
   const [mode, setMode] = useState("services");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("Все");
@@ -76,8 +76,8 @@ export default function CatalogV3({ items = [], orders = [], favorites = [], onF
   const openProfile = async (id) => {
     if (!id || !fetchData) return;
     try {
-      const result = await fetchData(`/api/users/${id}/public`);
-      if (result?.id) setProfile(result);
+      const [result, reviews] = await Promise.all([fetchData(`/api/users/${id}/public`), fetchData(`/api/users/${id}/reviews`).catch(() => [])]);
+      if (result?.id) setProfile({ ...result, reviews });
     } catch {
       setNotice("Профиль пока недоступен. Попробуйте ещё раз.");
     }
@@ -116,6 +116,7 @@ export default function CatalogV3({ items = [], orders = [], favorites = [], onF
           <strong>{price(listing.price)}</strong>
         </button>)}
         <div className="seller-trust-note"><b>Как считается репутация</b><span>Оценки и отзывы появляются только после завершённой сделки — это защищает обе стороны.</span></div>
+        {!!profile.reviews?.length && <section className="seller-review-list"><p className="market-eyebrow">ОТЗЫВЫ</p>{profile.reviews.slice(0, 3).map((review) => <article key={review.id}><span>{"★".repeat(Number(review.rating || 0))}</span><b>{review.reviewer_name}</b><p>{review.text}</p></article>)}</section>}
       </section>
     </section>;
   }
@@ -141,7 +142,7 @@ export default function CatalogV3({ items = [], orders = [], favorites = [], onF
     </main>
     <nav className="market-dock"><button type="button" onClick={() => onNavigate("home")}>⌂<span>Главная</span></button><button type="button" className="active">▦<span>Маркет</span></button><button type="button" onClick={() => onNavigate("orders")}>▤<span>Мои заказы</span></button><button type="button" onClick={() => onNavigate("profile")}>♙<span>Профиль</span></button></nav>
     {notice && <button className="market-notice" type="button" onClick={() => setNotice("")}>{notice}<span>×</span></button>}
-    {detail && <DetailSheet item={detail} onClose={() => setDetail(null)} onProfile={openProfile} onFavorite={onFavorite} favorites={favorites} onCreate={() => { setDetail(null); onNavigate("create-order"); }} application={application} setApplication={setApplication} sending={sending} onApply={submitApplication} />}
+    {detail && <DetailSheet item={detail} onClose={() => setDetail(null)} onProfile={openProfile} onFavorite={onFavorite} favorites={favorites} onCreate={() => { onStartServiceRequest?.(detail.id); setDetail(null); }} application={application} setApplication={setApplication} sending={sending} onApply={submitApplication} />}
   </section>;
 }
 
@@ -186,7 +187,7 @@ function DetailSheet({ item, onClose, onProfile, onFavorite, favorites, onCreate
       <p className="detail-description">{item.description || "Исполнитель уточнит детали после создания заказа."}</p>
       {isService && portfolio(item).length > 0 && <section className="detail-portfolio"><h3>Портфолио</h3><div>{portfolio(item).map((image, index) => <img src={image} alt={`Пример работы ${index + 1}`} key={image} />)}</div></section>}
       <div className="detail-facts"><div><span>{isService ? "Стоимость" : "Бюджет"}</span><b>{price(isService ? item.price : item.budget, isService ? "от " : "до ")}</b></div><div><span>Срок</span><b>{isService ? item.delivery_time || "Обсуждается" : item.deadline || "Обсуждается"}</b></div></div>
-      {isService ? <div className="detail-actions"><button type="button" className="secondary" onClick={() => onFavorite(item.id)}>{favorites.includes(item.id) ? "♥ В избранном" : "♡ В избранное"}</button><button type="button" className="primary" onClick={onCreate}>Создать заказ</button></div> : <div className="application-form"><h3>Отклик на заказ</h3><div><input value={application.price} onChange={(event) => setApplication({ ...application, price: event.target.value })} inputMode="numeric" placeholder="Ваша цена, ₽" /><input value={application.deadline} onChange={(event) => setApplication({ ...application, deadline: event.target.value })} placeholder="Срок выполнения" /></div><textarea value={application.comment} onChange={(event) => setApplication({ ...application, comment: event.target.value })} placeholder="Коротко расскажите, как выполните задачу" /><button type="button" className="primary" disabled={sending} onClick={onApply}>{sending ? "Отправляем…" : "Отправить отклик"}</button></div>}
+      {isService ? <div className="detail-actions"><button type="button" className="secondary" onClick={() => onFavorite(item.id)}>{favorites.includes(item.id) ? "♥ В избранном" : "♡ В избранное"}</button><button type="button" className="primary" onClick={onCreate}>Обсудить услугу</button></div> : <div className="application-form"><h3>Отклик на заказ</h3><div><input value={application.price} onChange={(event) => setApplication({ ...application, price: event.target.value })} inputMode="numeric" placeholder="Ваша цена, ₽" /><input value={application.deadline} onChange={(event) => setApplication({ ...application, deadline: event.target.value })} placeholder="Срок выполнения" /></div><textarea value={application.comment} onChange={(event) => setApplication({ ...application, comment: event.target.value })} placeholder="Коротко расскажите, как выполните задачу" /><button type="button" className="primary" disabled={sending} onClick={onApply}>{sending ? "Отправляем…" : "Отправить отклик"}</button></div>}
     </section>
   </div>;
 }

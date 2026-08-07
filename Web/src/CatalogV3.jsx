@@ -177,9 +177,11 @@ function DetailSheet({ item, onClose, onProfile, onFavorite, favorites, onCreate
   return <div className="market-modal-backdrop" role="presentation" onMouseDown={onClose}>
     <section className="market-detail-sheet" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
       <div className="sheet-handle" /><header><span>{item.category || (isService ? "Услуга" : "Заказ")}</span><button type="button" onClick={onClose}>×</button></header>
-      {item.image_data && <img className="detail-image" src={item.image_data} alt="Обложка услуги" />}
+      {isService && item.image_data && <img className="detail-image" src={item.image_data} alt="Обложка услуги" />}
+      {!isService && item.reference_image_data && <img className="detail-image" src={item.reference_image_data} alt="Референс заказчика" />}
       <h2>{item.title}</h2>
       {isService && <button type="button" className="detail-seller" onClick={() => onProfile(item.seller_id)}><Avatar name={name} image={item.avatar_url} /><span><b>{name}</b><small>@{sellerNick(item)}</small></span><Rating rating={item.avg_rating} count={item.reviews_count} /><i>›</i></button>}
+      {!isService && item.reference_image_data && <p className="detail-reference-label">Референс от заказчика</p>}
       <p className="detail-description">{item.description || "Исполнитель уточнит детали после создания заказа."}</p>
       {isService && portfolio(item).length > 0 && <section className="detail-portfolio"><h3>Портфолио</h3><div>{portfolio(item).map((image, index) => <img src={image} alt={`Пример работы ${index + 1}`} key={image} />)}</div></section>}
       <div className="detail-facts"><div><span>{isService ? "Стоимость" : "Бюджет"}</span><b>{price(isService ? item.price : item.budget, isService ? "от " : "до ")}</b></div><div><span>Срок</span><b>{isService ? item.delivery_time || "Обсуждается" : item.deadline || "Обсуждается"}</b></div></div>

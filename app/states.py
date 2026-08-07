@@ -11,6 +11,7 @@ class CreateListing(StatesGroup):
     price = State()
     payout_details = State()
     description = State()
+    cover_photo = State()
 
 
 class SearchState(StatesGroup):

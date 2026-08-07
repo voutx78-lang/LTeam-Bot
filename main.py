@@ -2089,11 +2089,11 @@ async def handle_miniapp_action(message: Message, state: FSMContext):
         )
         return
 
-    if action == "admin_open":
+    if action in {"admin_open", "admin_panel"}:
         if not is_admin(message.from_user.id):
             await message.answer("Этот раздел доступен только администраторам.")
             return
-        section = str(payload.get("section", ""))
+        section = "panel" if action == "admin_panel" else str(payload.get("section", ""))
         sections = {
             "payments": ("Оплаты на проверке", "admin_deals_payments"),
             "payouts": ("Выплаты", "admin_deals_payouts"),

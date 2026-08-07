@@ -2125,6 +2125,62 @@ async def handle_miniapp_action(message: Message, state: FSMContext):
         )
         return
 
+    quick_sections = {
+        "open_orders": ("Заказы", "orders_list"),
+        "my_listings": ("Мои объявления", "my_listings"),
+        "profile_settings": ("Настройки профиля", "profile_settings"),
+        "support": ("Поддержка", "support"),
+        "balance_history": ("История операций", "balance_history"),
+        "open_market": ("Каталог услуг", "market"),
+        "open_home": ("Главное меню", "home"),
+        "open_guarantee": ("Правила гаранта", "rules"),
+    }
+    if action in quick_sections:
+        title, callback = quick_sections[action]
+        await message.answer(
+            f"Открываю: {title}.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text=title, callback_data=callback)
+            ]]),
+        )
+        return
+
+    if action == "open_listing":
+        try:
+            listing_id = int(payload.get("listing_id") or 0)
+        except (TypeError, ValueError):
+            listing_id = 0
+        with db() as conn:
+            listing = conn.execute("SELECT id FROM listings WHERE id=? AND status='active'", (listing_id,)).fetchone()
+        if not listing:
+            await message.answer("Это объявление больше недоступно. Обновите каталог и выберите другое.")
+            return
+        await message.answer(
+            "Открываю услугу в боте.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="Открыть услугу", callback_data=f"view_listing:{listing_id}")
+            ]]),
+        )
+        return
+
+    if action == "open_deal":
+        try:
+            deal_id = int(payload.get("deal_id") or 0)
+        except (TypeError, ValueError):
+            deal_id = 0
+        with db() as conn:
+            deal = conn.execute("SELECT buyer_id, seller_id FROM deals WHERE id=?", (deal_id,)).fetchone()
+        if not deal or (message.from_user.id not in {int(deal[0]), int(deal[1])} and not is_staff(message.from_user.id)):
+            await message.answer("Сделка не найдена или недоступна вашему профилю.")
+            return
+        await message.answer(
+            "Открываю сделку в боте.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="Открыть сделку", callback_data=f"deal:{deal_id}")
+            ]]),
+        )
+        return
+
     if action in {"admin_open", "admin_panel"}:
         if not is_admin(message.from_user.id):
             await message.answer("Этот раздел доступен только администраторам.")

@@ -208,7 +208,12 @@ def orders():
             o.status, o.deadline, o.created_at, COALESCE(o.reference_image_data, '') AS reference_image_data, COALESCE(u.username, '') AS customer_username, COALESCE(u.display_name, '') AS customer_name
             FROM orders o LEFT JOIN users u ON u.user_id=o.customer_id
             WHERE o.status IN ('active','open','approved') OR o.customer_id=? ORDER BY o.id DESC LIMIT 50""", (user_id,)).fetchall()
-    return jsonify([dict(row) for row in rows])
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["customer_avatar_url"] = avatar_endpoint(item["customer_id"])
+        result.append(item)
+    return jsonify(result)
 
 
 @app.post("/api/orders")
@@ -287,12 +292,17 @@ def my_applications():
     if not user_id:
         return jsonify({"error": "unauthorized"}), 401
     with db() as connection:
-        rows = connection.execute("""SELECT a.id, a.order_id, a.price, a.deadline, a.comment, a.status, a.created_at,
+        rows = connection.execute("""SELECT a.id, a.order_id, a.customer_id, a.price, a.deadline, a.comment, a.status, a.created_at,
             o.title, o.category, o.budget, COALESCE(u.username, '') AS customer_username, COALESCE(u.display_name, '') AS customer_name
             FROM order_applications a JOIN orders o ON o.id=a.order_id
             LEFT JOIN users u ON u.user_id=a.customer_id
             WHERE a.executor_id=? ORDER BY a.id DESC LIMIT 100""", (user_id,)).fetchall()
-    return jsonify([dict(row) for row in rows])
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["customer_avatar_url"] = avatar_endpoint(item["customer_id"])
+        result.append(item)
+    return jsonify(result)
 
 
 @app.get("/api/orders/<int:order_id>/applications")
@@ -308,7 +318,12 @@ def order_applications(order_id: int):
             COALESCE(u.username, '') AS executor_username, COALESCE(u.display_name, '') AS executor_name
             FROM order_applications a LEFT JOIN users u ON u.user_id=a.executor_id
             WHERE a.order_id=? ORDER BY a.id DESC""", (order_id,)).fetchall()
-    return jsonify([dict(row) for row in rows])
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["executor_avatar_url"] = avatar_endpoint(item["executor_id"])
+        result.append(item)
+    return jsonify(result)
 
 
 @app.post("/api/orders/<int:order_id>/applications/<int:application_id>/accept")

@@ -27,6 +27,10 @@ def avatar_endpoint(user_id: int) -> str:
     return f"{request.host_url.rstrip('/')}/api/users/{user_id}/avatar"
 
 
+def listing_cover_endpoint(listing_id: int) -> str:
+    return f"{request.host_url.rstrip('/')}/api/listings/{listing_id}/cover"
+
+
 @app.after_request
 def add_cors_headers(response):
     """Разрешает опубликованной MiniApp обращаться к отдельному API-сервису."""
@@ -86,7 +90,8 @@ def listings():
     with db() as connection:
         rows = connection.execute("""SELECT l.id, l.title, l.category, l.price, COALESCE(l.description, '') AS description,
             l.seller_id, COALESCE(l.delivery_time, '') AS delivery_time, COALESCE(u.username, '') AS seller_username,
-            COALESCE(u.display_name, '') AS seller_name, COALESCE(l.image_data, '') AS image_data
+            COALESCE(u.display_name, '') AS seller_name, COALESCE(l.image_data, '') AS image_data,
+            COALESCE(l.portfolio_data, '[]') AS portfolio_data
             , COALESCE(r.avg_rating, 0) AS avg_rating, COALESCE(r.reviews_count, 0) AS reviews_count
             FROM listings l LEFT JOIN users u ON u.user_id=l.seller_id
             LEFT JOIN (SELECT seller_id, AVG(rating) AS avg_rating, COUNT(*) AS reviews_count FROM reviews GROUP BY seller_id) r ON r.seller_id=l.seller_id
@@ -95,8 +100,28 @@ def listings():
     for row in rows:
         item = dict(row)
         item["avatar_url"] = avatar_endpoint(item["seller_id"])
+        if item["image_data"].startswith("tg:"):
+            item["image_data"] = listing_cover_endpoint(item["id"])
         result.append(item)
     return jsonify(result)
+
+
+@app.get("/api/listings/<int:listing_id>/cover")
+def listing_cover(listing_id: int):
+    with db() as connection:
+        row = connection.execute("SELECT COALESCE(image_data, '') AS image_data FROM listings WHERE id=?", (listing_id,)).fetchone()
+    file_id = str(row["image_data"] if row else "")
+    if not file_id.startswith("tg:") or not BOT_TOKEN:
+        return "", 404
+    try:
+        file_info = json.loads(urlopen(f"https://api.telegram.org/bot{BOT_TOKEN}/getFile?file_id={file_id[3:]}", timeout=6).read())
+        path = file_info.get("result", {}).get("file_path")
+        if not path:
+            return "", 404
+        data = urlopen(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{path}", timeout=8).read()
+    except Exception:
+        return "", 404
+    return send_file(BytesIO(data), mimetype="image/jpeg", max_age=3600)
 
 
 @app.get("/api/users/<int:user_id>/avatar")
@@ -135,6 +160,12 @@ def create_listing():
     description = str(payload.get("description", "")).strip()[:2000]
     delivery_time = str(payload.get("delivery_time", "По договорённости")).strip()[:80]
     image_data = str(payload.get("image_data", "")).strip()
+    portfolio = payload.get("portfolio_data", [])
+    if not isinstance(portfolio, list):
+        portfolio = []
+    portfolio = [str(image).strip() for image in portfolio[:4] if str(image).strip().startswith("data:image/")]
+    if any(len(image) > 500_000 for image in portfolio):
+        return jsonify({"error": "validation", "message": "Каждый пример портфолио должен быть до 350 КБ."}), 400
     if image_data and (not image_data.startswith("data:image/") or len(image_data) > 900_000):
         return jsonify({"error": "validation", "message": "Изображение должно быть картинкой до 650 КБ."}), 400
     try:
@@ -145,9 +176,9 @@ def create_listing():
         return jsonify({"error": "validation", "message": "Заполните название, описание и цену."}), 400
     with db() as connection:
         cursor = connection.execute(
-            """INSERT INTO listings (seller_id, title, category, item_type, condition, price, description, delivery_time, image_data, status, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (user_id, title, category, "Услуга", "new", price, description, delivery_time, image_data, "pending", datetime.now().isoformat()),
+            """INSERT INTO listings (seller_id, title, category, item_type, condition, price, description, delivery_time, image_data, portfolio_data, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, title, category, "Услуга", "new", price, description, delivery_time, image_data, json.dumps(portfolio, ensure_ascii=False), "pending", datetime.now().isoformat()),
         )
         connection.commit()
     return jsonify({"ok": True, "listing_id": cursor.lastrowid, "status": "pending"}), 201
@@ -228,7 +259,7 @@ def my_listings():
     if not user_id:
         return jsonify({"error": "unauthorized"}), 401
     with db() as connection:
-        rows = connection.execute("SELECT id, title, category, price, COALESCE(description, '') AS description, status, created_at FROM listings WHERE seller_id=? ORDER BY id DESC LIMIT 100", (user_id,)).fetchall()
+        rows = connection.execute("SELECT id, title, category, price, COALESCE(description, '') AS description, COALESCE(image_data, '') AS image_data, COALESCE(portfolio_data, '[]') AS portfolio_data, status, created_at FROM listings WHERE seller_id=? ORDER BY id DESC LIMIT 100", (user_id,)).fetchall()
     return jsonify([dict(row) for row in rows])
 
 
@@ -367,10 +398,16 @@ def public_profile(user_id: int):
     with db() as connection:
         user = connection.execute("SELECT COALESCE(username, '') AS username, COALESCE(display_name, '') AS display_name, COALESCE(verified, 0) AS verified FROM users WHERE user_id=?", (user_id,)).fetchone()
         stats = connection.execute("SELECT COALESCE(AVG(rating), 0) AS rating, COUNT(*) AS reviews_count FROM reviews WHERE seller_id=?", (user_id,)).fetchone()
-        listings = connection.execute("SELECT id, title, category, price, COALESCE(delivery_time, '') AS delivery_time, COALESCE(image_data, '') AS image_data FROM listings WHERE seller_id=? AND status='active' ORDER BY id DESC LIMIT 30", (user_id,)).fetchall()
+        listings = connection.execute("SELECT id, title, category, price, COALESCE(delivery_time, '') AS delivery_time, COALESCE(image_data, '') AS image_data, COALESCE(portfolio_data, '[]') AS portfolio_data FROM listings WHERE seller_id=? AND status='active' ORDER BY id DESC LIMIT 30", (user_id,)).fetchall()
     if not user:
         return jsonify({"error": "not_found"}), 404
-    return jsonify({"id": user_id, **dict(user), **dict(stats), "avatar_url": avatar_endpoint(user_id), "listings": [dict(row) for row in listings]})
+    listing_data = []
+    for row in listings:
+        item = dict(row)
+        if item["image_data"].startswith("tg:"):
+            item["image_data"] = listing_cover_endpoint(item["id"])
+        listing_data.append(item)
+    return jsonify({"id": user_id, **dict(user), **dict(stats), "avatar_url": avatar_endpoint(user_id), "listings": listing_data})
 
 
 @app.get("/api/admin/summary")

@@ -5,11 +5,14 @@ import hmac
 import json
 import os
 import sqlite3
+import time
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import parse_qsl
+from urllib.request import urlopen
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_file, send_from_directory
 from datetime import datetime
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -17,6 +20,11 @@ load_dotenv(BASE_DIR / ".env")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_IDS = {int(value.strip()) for value in os.getenv("ADMIN_IDS", "").split(",") if value.strip().isdigit()}
 app = Flask(__name__, static_folder=str(BASE_DIR / "Web" / "dist"), static_url_path="")
+AVATAR_CACHE: dict[int, tuple[float, bytes, str]] = {}
+
+
+def avatar_endpoint(user_id: int) -> str:
+    return f"{request.host_url.rstrip('/')}/api/users/{user_id}/avatar"
 
 
 @app.after_request
@@ -83,7 +91,37 @@ def listings():
             FROM listings l LEFT JOIN users u ON u.user_id=l.seller_id
             LEFT JOIN (SELECT seller_id, AVG(rating) AS avg_rating, COUNT(*) AS reviews_count FROM reviews GROUP BY seller_id) r ON r.seller_id=l.seller_id
             WHERE l.status='active' ORDER BY COALESCE(l.is_top,0) DESC, l.id DESC LIMIT 50""").fetchall()
-    return jsonify([dict(row) for row in rows])
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["avatar_url"] = avatar_endpoint(item["seller_id"])
+        result.append(item)
+    return jsonify(result)
+
+
+@app.get("/api/users/<int:user_id>/avatar")
+def user_avatar(user_id: int):
+    """Return a Telegram profile image without exposing the bot token to MiniApp clients."""
+    if not BOT_TOKEN:
+        return "", 404
+    cached = AVATAR_CACHE.get(user_id)
+    if cached and cached[0] > time.time():
+        return send_file(BytesIO(cached[1]), mimetype=cached[2], max_age=3600)
+    try:
+        photos = json.loads(urlopen(f"https://api.telegram.org/bot{BOT_TOKEN}/getUserProfilePhotos?user_id={user_id}&limit=1", timeout=6).read())
+        entries = photos.get("result", {}).get("photos", [])
+        if not entries:
+            return "", 404
+        file_id = entries[0][-1]["file_id"]
+        file_info = json.loads(urlopen(f"https://api.telegram.org/bot{BOT_TOKEN}/getFile?file_id={file_id}", timeout=6).read())
+        path = file_info.get("result", {}).get("file_path")
+        if not path:
+            return "", 404
+        data = urlopen(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{path}", timeout=8).read()
+    except Exception:
+        return "", 404
+    AVATAR_CACHE[user_id] = (time.time() + 3600, data, "image/jpeg")
+    return send_file(BytesIO(data), mimetype="image/jpeg", max_age=3600)
 
 
 @app.post("/api/listings")
@@ -302,7 +340,7 @@ def public_profile(user_id: int):
         listings = connection.execute("SELECT id, title, category, price, COALESCE(delivery_time, '') AS delivery_time, COALESCE(image_data, '') AS image_data FROM listings WHERE seller_id=? AND status='active' ORDER BY id DESC LIMIT 30", (user_id,)).fetchall()
     if not user:
         return jsonify({"error": "not_found"}), 404
-    return jsonify({"id": user_id, **dict(user), **dict(stats), "listings": [dict(row) for row in listings]})
+    return jsonify({"id": user_id, **dict(user), **dict(stats), "avatar_url": avatar_endpoint(user_id), "listings": [dict(row) for row in listings]})
 
 
 @app.get("/api/admin/summary")

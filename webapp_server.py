@@ -17,6 +17,7 @@ from datetime import datetime
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
+from app.database import db as shared_db
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_IDS = {int(value.strip()) for value in os.getenv("ADMIN_IDS", "").split(",") if value.strip().isdigit()}
 app = Flask(__name__, static_folder=str(BASE_DIR / "Web" / "dist"), static_url_path="")
@@ -70,7 +71,7 @@ def get_user() -> dict:
 
 
 def db() -> sqlite3.Connection:
-    connection = sqlite3.connect(BASE_DIR / "market.db")
+    connection = shared_db()
     connection.row_factory = sqlite3.Row
     return connection
 
@@ -450,6 +451,25 @@ def balance_history_api():
         return jsonify([])
 
 
+@app.route("/api/tickets", methods=["GET", "POST"])
+def tickets_api():
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    if request.method == "GET":
+        with db() as connection:
+            rows = connection.execute("SELECT id, text, status, created_at FROM tickets WHERE user_id=? ORDER BY id DESC LIMIT 30", (user_id,)).fetchall()
+        return jsonify([dict(row) for row in rows])
+    text = str((request.get_json(silent=True) or {}).get("text", "")).strip()[:2000]
+    if len(text) < 8:
+        return jsonify({"error": "validation", "message": "Опишите вопрос подробнее — минимум 8 символов."}), 400
+    with db() as connection:
+        cursor = connection.execute("INSERT INTO tickets (user_id, text, status, created_at) VALUES (?, ?, 'open', ?)", (user_id, text, datetime.now().isoformat()))
+        connection.commit()
+    notify_admins(f"Новое обращение в поддержку\n\nПользователь: {user_id}\n{text}")
+    return jsonify({"ok": True, "ticket_id": cursor.lastrowid, "status": "open"}), 201
+
+
 @app.get("/api/users/<int:user_id>/public")
 def public_profile(user_id: int):
     """Public marketplace profile: no private contacts or payment data."""
@@ -470,15 +490,108 @@ def public_profile(user_id: int):
     return jsonify({"id": user_id, **dict(user), **dict(stats), "avatar_url": avatar_endpoint(user_id), "listings": listing_data})
 
 
+@app.get("/api/users/<int:user_id>/reviews")
+def public_user_reviews(user_id: int):
+    with db() as connection:
+        rows = connection.execute("""SELECT r.id, r.rating, COALESCE(r.text, '') AS text, r.created_at,
+            COALESCE(u.display_name, u.username, 'Покупатель LTeam') AS reviewer_name
+            FROM reviews r LEFT JOIN users u ON u.user_id=r.reviewer_id
+            WHERE r.seller_id=? ORDER BY r.id DESC LIMIT 30""", (user_id,)).fetchall()
+    return jsonify([dict(row) for row in rows])
+
+
+@app.get("/api/reviews/pending")
+def pending_reviews():
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    with db() as connection:
+        rows = connection.execute("""SELECT d.id AS deal_id, d.seller_id, d.amount, COALESCE(o.title, l.title, 'Сделка LTeam') AS title,
+            COALESCE(u.display_name, u.username, 'Исполнитель LTeam') AS seller_name
+            FROM deals d LEFT JOIN listings l ON l.id=d.listing_id LEFT JOIN orders o ON o.id=d.order_id
+            LEFT JOIN users u ON u.user_id=d.seller_id
+            WHERE d.buyer_id=? AND d.status='completed' AND NOT EXISTS
+              (SELECT 1 FROM reviews r WHERE r.deal_id=d.id AND r.reviewer_id=?)
+            ORDER BY d.id DESC LIMIT 20""", (user_id, user_id)).fetchall()
+    return jsonify([dict(row) for row in rows])
+
+
+@app.post("/api/deals/<int:deal_id>/review")
+def create_review(deal_id: int):
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    payload = request.get_json(silent=True) or {}
+    try:
+        rating = int(payload.get("rating", 0))
+    except (TypeError, ValueError):
+        rating = 0
+    text = str(payload.get("text", "")).strip()[:1200]
+    if rating < 1 or rating > 5 or len(text) < 3:
+        return jsonify({"error": "validation", "message": "Поставьте оценку и оставьте короткий отзыв."}), 400
+    with db() as connection:
+        deal = connection.execute("SELECT buyer_id, seller_id, status FROM deals WHERE id=?", (deal_id,)).fetchone()
+        if not deal or int(deal["buyer_id"]) != user_id or deal["status"] != "completed":
+            return jsonify({"error": "forbidden", "message": "Отзыв доступен только покупателю после завершённой сделки."}), 403
+        exists = connection.execute("SELECT 1 FROM reviews WHERE deal_id=? AND reviewer_id=?", (deal_id, user_id)).fetchone()
+        if exists:
+            return jsonify({"error": "validation", "message": "Отзыв по этой сделке уже оставлен."}), 400
+        connection.execute("INSERT INTO reviews (deal_id, reviewer_id, seller_id, rating, text, created_at) VALUES (?, ?, ?, ?, ?, ?)", (deal_id, user_id, deal["seller_id"], rating, text, datetime.now().isoformat()))
+        connection.commit()
+    return jsonify({"ok": True}), 201
+
+
 @app.get("/api/admin/summary")
 def admin_summary():
     if int(get_user().get("id", 0)) not in ADMIN_IDS:
         return jsonify({"error": "forbidden"}), 403
     with db() as connection:
-        payments = connection.execute("SELECT COUNT(*) FROM deals WHERE status='waiting_admin_confirm'").fetchone()[0]
+        payments = connection.execute("SELECT COUNT(*) FROM deals WHERE status IN ('waiting_payment','waiting_admin_confirm')").fetchone()[0]
         disputes = connection.execute("SELECT COUNT(*) FROM deals WHERE status='dispute_open'").fetchone()[0]
         payouts = connection.execute("SELECT COUNT(*) FROM withdrawal_requests WHERE status='pending'").fetchone()[0]
-    return jsonify({"payments": payments, "disputes": disputes, "payouts": payouts})
+        moderation = connection.execute("SELECT (SELECT COUNT(*) FROM listings WHERE status IN ('pending','moderation')) + (SELECT COUNT(*) FROM orders WHERE status='moderation')").fetchone()[0]
+    return jsonify({"payments": payments, "disputes": disputes, "payouts": payouts, "moderation": moderation})
+
+
+@app.get("/api/admin/moderation")
+def admin_moderation_queue():
+    if int(get_user().get("id", 0)) not in ADMIN_IDS:
+        return jsonify({"error": "forbidden"}), 403
+    with db() as connection:
+        listings_rows = connection.execute("""SELECT id, seller_id AS author_id, title, category, price AS amount,
+            COALESCE(description, '') AS description, 'listing' AS item_type, status, created_at
+            FROM listings WHERE status IN ('pending','moderation') ORDER BY id ASC LIMIT 50""").fetchall()
+        order_rows = connection.execute("""SELECT id, customer_id AS author_id, title, category, budget AS amount,
+            COALESCE(description, '') AS description, 'order' AS item_type, status, created_at
+            FROM orders WHERE status='moderation' ORDER BY id ASC LIMIT 50""").fetchall()
+    return jsonify([dict(row) for row in [*listings_rows, *order_rows]])
+
+
+@app.post("/api/admin/moderation/<item_type>/<int:item_id>")
+def admin_moderation_decision(item_type: str, item_id: int):
+    admin_id = current_user_id()
+    if not admin_id or admin_id not in ADMIN_IDS:
+        return jsonify({"error": "forbidden"}), 403
+    payload = request.get_json(silent=True) or {}
+    action = str(payload.get("action", "")).lower()
+    if item_type not in {"listing", "order"} or action not in {"approve", "reject"}:
+        return jsonify({"error": "validation", "message": "Неверное действие модерации."}), 400
+    table, owner_column, success_status = ("listings", "seller_id", "active") if item_type == "listing" else ("orders", "customer_id", "active")
+    with db() as connection:
+        row = connection.execute(f"SELECT {owner_column} AS owner_id, title FROM {table} WHERE id=?", (item_id,)).fetchone()
+        if not row:
+            return jsonify({"error": "not_found"}), 404
+        status = success_status if action == "approve" else "rejected"
+        connection.execute(f"UPDATE {table} SET status=? WHERE id=?", (status, item_id))
+        connection.commit()
+    if BOT_TOKEN:
+        try:
+            outcome = "одобрена и опубликована" if action == "approve" else "отклонена модератором"
+            body = urlencode({"chat_id": row["owner_id"], "text": f"Ваша публикация «{row['title']}» {outcome}."}).encode()
+            urlopen(Request(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data=body), timeout=4).read()
+        except Exception:
+            pass
+    return jsonify({"ok": True, "status": status})
 
 
 @app.get("/")

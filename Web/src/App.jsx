@@ -27,6 +27,8 @@ import "./SellerProfile.css";
 import CatalogV3 from "./CatalogV3";
 import OrdersWorkspace from "./OrdersWorkspace";
 import MyListingsWorkspace from "./MyListingsWorkspace";
+import OrderComposer from "./OrderComposer";
+import "./OrderComposer.css";
 
 const tg = window.Telegram?.WebApp;
 const API_BASE = import.meta.env.VITE_API_URL || "https://lteam-botminiapp.onrender.com";
@@ -360,6 +362,7 @@ export default function App() {
 
     {tab === "catalog" && <CatalogV3 items={catalogListings} orders={orderItems} favorites={favorites} onFavorite={toggleFavorite} onNavigate={setTab} request={apiRequest} fetchData={apiFetch} />}
     {tab === "create-order" && <OrderReferenceWidget />}
+    {tab === "create-order" && <OrderComposer initial={{ title: "", category: "Разработка", budget: "", deadline: "По договорённости", description: "" }} onClose={() => setTab("orders")} message={formMessage} onSubmit={async (form, reset) => { setFormMessage(""); try { const result = await apiRequest("/api/orders", "POST", form); setOrderItems((items) => [{ ...form, id: result.order_id, status: "moderation" }, ...items]); setFormMessage("Заказ отправлен на модерацию. Администраторы получили уведомление."); reset(); } catch (error) { setFormMessage(error.message); } }} />}
     {tab === "orders" && <OrdersWorkspace orders={orderItems} deals={dealItems} profile={profile} fetchData={apiFetch} onNavigate={setTab} onChat={setChat} />}
     {tab === "my-listings" && <MyListingsWorkspace fetchData={apiFetch} onNavigate={setTab} />}
     <nav className="bottom-nav">{navItems.map(([id, icon, label]) => <button className={tab === id ? "active" : ""} key={id} onClick={() => setTab(id)}><Icon name={icon} /><span>{label}</span></button>)}</nav>

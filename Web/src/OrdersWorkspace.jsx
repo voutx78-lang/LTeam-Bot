@@ -3,10 +3,13 @@ import { useEffect, useMemo, useState } from "react";
 const money = (value) => `${Number(value || 0).toLocaleString("ru-RU")} ₽`;
 const titleFor = (item) => item.title || "Заказ LTeam";
 
-export default function OrdersWorkspace({ orders = [], deals = [], profile, fetchData, onNavigate, onChat }) {
+export default function OrdersWorkspace({ orders = [], deals = [], profile, fetchData, request, onNavigate, onChat }) {
   const [view, setView] = useState("tasks");
   const [applications, setApplications] = useState([]);
   const [notice, setNotice] = useState("");
+  const [selectedTask, setSelectedTask] = useState(null);
+  const [taskApplications, setTaskApplications] = useState([]);
+  const [choosing, setChoosing] = useState(false);
   const ownOrders = useMemo(() => orders.filter((order) => Number(order.customer_id) === Number(profile?.id)), [orders, profile]);
 
   useEffect(() => {
@@ -22,14 +25,19 @@ export default function OrdersWorkspace({ orders = [], deals = [], profile, fetc
       <nav className="orders-tabs"><button className={view === "tasks" ? "active" : ""} onClick={() => setView("tasks")}>Мои задачи</button><button className={view === "responses" ? "active" : ""} onClick={() => setView("responses")}>Отклики</button><button className={view === "deals" ? "active" : ""} onClick={() => setView("deals")}>Сделки</button></nav>
       <section className="orders-list">
         {!active.length && <div className="orders-empty"><b>{view === "tasks" ? "Нет созданных задач" : view === "responses" ? "Откликов пока нет" : "Сделок пока нет"}</b><span>{view === "tasks" ? "Создайте заказ — исполнители смогут откликнуться." : "Здесь появится история работы на LTeam."}</span>{view === "tasks" && <button onClick={() => onNavigate("create-order")}>Создать заказ</button>}</div>}
-        {view === "tasks" && active.map((order) => <TaskRow key={order.id} order={order} onOpen={() => onChat({ kind: "order", item: order })} onApplications={async () => { try { const data = await fetchData(`/api/orders/${order.id}/applications`); setNotice(data.length ? `Откликов: ${data.length}` : "На заказ пока нет откликов."); } catch { setNotice("Не удалось загрузить отклики."); } }} />)}
+        {view === "tasks" && active.map((order) => <TaskRow key={order.id} order={order} onOpen={() => onChat({ kind: "order", item: order })} onApplications={async () => { try { const data = await fetchData(`/api/orders/${order.id}/applications`); setTaskApplications(data); setSelectedTask(order); } catch { setNotice("Не удалось загрузить отклики."); } }} />)}
         {view === "responses" && active.map((application) => <ApplicationRow key={application.id} item={application} onOpen={() => onChat({ kind: "order", item: { id: application.order_id, title: application.title } })} />)}
         {view === "deals" && active.map((deal) => <DealRow key={deal.id} deal={deal} onOpen={() => onChat({ kind: "deal", item: deal })} />)}
       </section>
     </main>
     {notice && <button className="market-notice" onClick={() => setNotice("")}>{notice}<span>×</span></button>}
+    {selectedTask && <ApplicantsSheet order={selectedTask} applications={taskApplications} onClose={() => setSelectedTask(null)} onChoose={async (application) => { if (choosing) return; setChoosing(true); try { const data = await request(`/api/orders/${selectedTask.id}/applications/${application.id}/accept`, "POST", {}); setNotice(`Исполнитель выбран. Сделка #${data.deal_id} ожидает оплату через гаранта.`); setSelectedTask(null); } catch (error) { setNotice(error?.message || "Не удалось выбрать исполнителя."); } finally { setChoosing(false); } }} choosing={choosing} />}
     <nav className="market-dock"><button onClick={() => onNavigate("home")}>⌂<span>Главная</span></button><button onClick={() => onNavigate("catalog")}>▦<span>Маркет</span></button><button className="active">▤<span>Мои заказы</span></button><button onClick={() => onNavigate("profile")}>♙<span>Профиль</span></button></nav>
   </section>;
+}
+
+function ApplicantsSheet({ order, applications, onClose, onChoose, choosing }) {
+  return <div className="applicants-backdrop" onMouseDown={onClose}><section className="applicants-sheet" onMouseDown={(event) => event.stopPropagation()}><div className="sheet-handle" /><header><div><small>ОТКЛИКИ НА ЗАКАЗ</small><h2>{titleFor(order)}</h2></div><button onClick={onClose}>×</button></header><p className="applicants-caption">Выберите исполнителя. После этого будет создана защищённая сделка, а оплата пройдёт через гаранта LTeam.</p>{!applications.length && <div className="applicants-empty">Откликов пока нет — исполнитель увидит заказ после модерации.</div>}<div className="applicants-list">{applications.map((item) => <article key={item.id} className="applicant-card"><div className="applicant-avatar">{(item.executor_name || item.executor_username || "L").slice(0, 1).toUpperCase()}</div><div className="applicant-copy"><b>{item.executor_name || item.executor_username || "Исполнитель LTeam"}</b><small>@{item.executor_username || "lteam_user"}</small><p>{item.comment}</p><span>{money(item.price)} · {item.deadline}</span></div><button disabled={choosing || item.status !== "new"} onClick={() => onChoose(item)}>{item.status === "new" ? (choosing ? "Создаём…" : "Выбрать") : "Выбран"}</button></article>)}</div></section></div>;
 }
 
 function TaskRow({ order, onOpen, onApplications }) {

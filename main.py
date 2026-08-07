@@ -2089,6 +2089,30 @@ async def handle_miniapp_action(message: Message, state: FSMContext):
         )
         return
 
+    if action == "ask_seller":
+        try:
+            listing_id = int(payload.get("listing_id") or 0)
+        except (TypeError, ValueError):
+            listing_id = 0
+        with db() as conn:
+            listing = conn.execute(
+                "SELECT seller_id, title, price FROM listings WHERE id=? AND status='active'",
+                (listing_id,),
+            ).fetchone()
+        if not listing:
+            await message.answer("Эта услуга больше недоступна. Обновите каталог и выберите другую.")
+            return
+        if int(listing[0]) == message.from_user.id:
+            await message.answer("Нельзя открыть обсуждение по своей услуге.")
+            return
+        await state.update_data(listing_id=listing_id, seller_id=int(listing[0]))
+        await state.set_state(ListingDiscussionState.message)
+        await message.answer(
+            f"Опишите задачу для услуги «{html.escape(listing[1] or 'LTeam услуга')}». "
+            "Сообщение будет отправлено исполнителю для безопасного обсуждения внутри LTeam."
+        )
+        return
+
     if action in {"admin_open", "admin_panel"}:
         if not is_admin(message.from_user.id):
             await message.answer("Этот раздел доступен только администраторам.")

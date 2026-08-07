@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 const money = (value) => `${Number(value || 0).toLocaleString("ru-RU")} ₽`;
 const titleFor = (item) => item.title || "Заказ LTeam";
 
-export default function OrdersWorkspace({ orders = [], deals = [], profile, fetchData, request, onNavigate, onChat }) {
+export default function OrdersWorkspace({ orders = [], deals = [], profile, fetchData, request, onNavigate, onChat, onDealsChanged }) {
   const [view, setView] = useState("tasks");
   const [applications, setApplications] = useState([]);
   const [notice, setNotice] = useState("");
@@ -28,7 +28,7 @@ export default function OrdersWorkspace({ orders = [], deals = [], profile, fetc
         {!active.length && <div className="orders-empty"><b>{view === "tasks" ? "Нет созданных задач" : view === "responses" ? "Откликов пока нет" : "Сделок пока нет"}</b><span>{view === "tasks" ? "Создайте заказ — исполнители смогут откликнуться." : "Здесь появится история работы на LTeam."}</span>{view === "tasks" && <button onClick={() => onNavigate("create-order")}>Создать заказ</button>}</div>}
         {view === "tasks" && active.map((order) => <TaskRow key={order.id} order={order} onOpen={() => onChat({ kind: "order", item: order })} onApplications={async () => { try { const data = await fetchData(`/api/orders/${order.id}/applications`); setTaskApplications(data); setSelectedTask(order); } catch { setNotice("Не удалось загрузить отклики."); } }} />)}
         {view === "responses" && active.map((application) => <ApplicationRow key={application.id} item={application} onOpen={() => onChat({ kind: "order", item: { id: application.order_id, title: application.title } })} />)}
-        {view === "deals" && active.map((deal) => <DealRow key={deal.id} deal={deal} onOpen={() => onChat({ kind: "deal", item: deal })} onReview={Number(deal.buyer_id) === Number(profile?.id) && deal.status === "completed" ? () => setReviewDeal(deal) : null} />)}
+        {view === "deals" && active.map((deal) => <DealRow key={deal.id} deal={deal} profile={profile} onOpen={() => onChat({ kind: "deal", item: deal })} onAction={async (action, payload = {}) => { try { const result = await request(`/api/deals/${deal.id}/action`, "POST", { action, ...payload }); const refreshed = await fetchData("/api/deals"); onDealsChanged?.(refreshed); setNotice(result.status === "waiting_admin_payment_approval" ? "Цена подтверждена. Запрос оплаты отправлен администратору." : "Статус сделки обновлён."); } catch (error) { setNotice(error?.message || "Не удалось обновить сделку."); } }} onReview={Number(deal.buyer_id) === Number(profile?.id) && deal.status === "completed" ? () => setReviewDeal(deal) : null} />)}
       </section>
     </main>
     {notice && <button className="market-notice" onClick={() => setNotice("")}>{notice}<span>×</span></button>}
@@ -57,7 +57,7 @@ function ApplicationRow({ item, onOpen }) {
   return <article className="work-row application-row"><div className="work-row-head"><span className="work-status">{item.status === "new" ? "Отправлен" : item.status}</span><small>{item.category || "Заказ"}</small></div><h3>{titleFor(item)}</h3><p>{item.comment || "Ваш отклик"}</p><div className="work-meta"><b>ваша цена {money(item.price)}</b><span>◷ {item.deadline || "Срок обсуждается"}</span></div><footer><span className="work-client">Заказчик: {item.customer_name || item.customer_username || "LTeam"}</span><button className="work-primary" onClick={onOpen}>Чат</button></footer></article>;
 }
 
-function DealRow({ deal, onOpen, onReview }) {
+function DealRow({ deal, profile, onOpen, onAction, onReview }) {
   const label = {
     discussion: "Согласование деталей",
     waiting_final_price: "Ожидаем цену",
@@ -72,5 +72,15 @@ function DealRow({ deal, onOpen, onReview }) {
     completed: "Завершена",
     cancelled: "Отменена",
   }[deal.status] || "Сделка";
-  return <article className="work-row deal-row"><div className="work-row-head"><span className="work-status active">{label}</span><small>Гарант LTeam</small></div><h3>{titleFor(deal)}</h3><div className="work-meta"><b>{money(deal.amount)}</b><span>Безопасная сделка</span></div><footer><span className="work-client">Все сообщения сохранены в сделке</span><div className="deal-row-actions">{onReview && <button className="work-review" onClick={onReview}>Отзыв</button>}<button className="work-primary" onClick={onOpen}>Чат сделки</button></div></footer></article>;
+  const isBuyer = Number(deal.buyer_id) === Number(profile?.id);
+  const isSeller = Number(deal.seller_id) === Number(profile?.id);
+  const setPrice = () => {
+    const value = window.prompt("Итоговая цена в ₽", String(deal.amount || ""));
+    if (value?.trim()) onAction("set_final_price", { amount: value.trim() });
+  };
+  const openDispute = () => {
+    const reason = window.prompt("Коротко опишите проблему");
+    if (reason?.trim()) onAction("open_dispute", { reason: reason.trim() });
+  };
+  return <article className="work-row deal-row"><div className="work-row-head"><span className="work-status active">{label}</span><small>Гарант LTeam</small></div><h3>{titleFor(deal)}</h3><div className="work-meta"><b>{money(deal.amount)}</b><span>Безопасная сделка</span></div><footer><span className="work-client">Все сообщения сохранены в сделке</span><div className="deal-row-actions">{isSeller && deal.status === "discussion" && <button className="work-review" onClick={setPrice}>Выставить цену</button>}{isBuyer && deal.status === "waiting_buyer_price_confirm" && <button className="work-review" onClick={() => onAction("confirm_price")}>Подтвердить цену</button>}{isSeller && deal.status === "in_work" && <button className="work-review" onClick={() => onAction("mark_done")}>Работа готова</button>}{isBuyer && deal.status === "waiting_buyer_confirm" && <button className="work-review" onClick={() => onAction("confirm_done")}>Подтвердить</button>}{!['completed','cancelled','dispute_open'].includes(deal.status) && <button className="work-review" onClick={openDispute}>Спор</button>}{onReview && <button className="work-review" onClick={onReview}>Отзыв</button>}<button className="work-primary" onClick={onOpen}>Чат сделки</button></div></footer></article>;
 }

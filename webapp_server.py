@@ -436,6 +436,20 @@ def balance():
     return jsonify(dict(row) if row else {"available": 0, "frozen": 0, "total_earned": 0, "total_withdrawn": 0})
 
 
+@app.get("/api/balance/history")
+def balance_history_api():
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    try:
+        with db() as connection:
+            rows = connection.execute("""SELECT id, tx_type, amount, balance_after, comment, created_at
+                FROM balance_transactions WHERE user_id=? ORDER BY id DESC LIMIT 60""", (user_id,)).fetchall()
+        return jsonify([dict(row) for row in rows])
+    except sqlite3.OperationalError:
+        return jsonify([])
+
+
 @app.get("/api/users/<int:user_id>/public")
 def public_profile(user_id: int):
     """Public marketplace profile: no private contacts or payment data."""

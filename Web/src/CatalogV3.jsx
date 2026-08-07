@@ -110,11 +110,12 @@ export default function CatalogV3({ items = [], orders = [], favorites = [], onF
       <section className="seller-stat-row"><div><b>{profile.reviews_count || 0}</b><span>отзывов</span></div><div><b>{Number(profile.rating || 0).toFixed(1)}</b><span>рейтинг</span></div><div><b>{profile.listings?.length || 0}</b><span>услуг</span></div></section>
       <section className="seller-services"><div className="market-section-title"><div><p className="market-eyebrow">ВИТРИНА</p><h2>Услуги исполнителя</h2></div></div>
         {!profile.listings?.length && <div className="market-empty">У этого исполнителя пока нет активных услуг.</div>}
-        {profile.listings?.map((listing) => <article className="seller-service-row" key={listing.id}>
+        {profile.listings?.map((listing) => <button type="button" className="seller-service-row" key={listing.id} onClick={() => { setProfile(null); setDetail({ ...listing, seller_id: profile.id, seller_name: profileName, seller_username: profile.username, avatar_url: profile.avatar_url, avg_rating: profile.rating, reviews_count: profile.reviews_count, type: "service" }); }}>
           <div className="seller-mini-cover">{listing.image_data ? <img src={listing.image_data} alt="" /> : "LT"}</div>
           <div><span>{listing.category || "Услуга"}</span><b>{listing.title}</b><small>{listing.delivery_time || "Срок обсуждается"}</small></div>
           <strong>{price(listing.price)}</strong>
-        </article>)}
+        </button>)}
+        <div className="seller-trust-note"><b>Как считается репутация</b><span>Оценки и отзывы появляются только после завершённой сделки — это защищает обе стороны.</span></div>
       </section>
     </section>;
   }

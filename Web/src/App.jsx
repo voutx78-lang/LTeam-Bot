@@ -192,6 +192,8 @@ function ChatSheet({ chat, currentUserId, onClose }) {
 function ListingComposer({ initial, onSubmit, busy, message }) {
   const [form, setForm] = useState(initial);
   const [preview, setPreview] = useState(initial.image_data || "");
+  const [portfolio, setPortfolio] = useState(initial.portfolio_data || []);
+  const [error, setError] = useState("");
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
   const selectImage = (event) => {
     const file = event.target.files?.[0];
@@ -201,7 +203,17 @@ function ListingComposer({ initial, onSubmit, busy, message }) {
     reader.onload = () => { const image = String(reader.result || ""); setPreview(image); update("image_data", image); };
     reader.readAsDataURL(file);
   };
-  return <section className="listing-composer"><div className="page-title"><div><p className="eyebrow">Новая услуга</p><h1>Разместить объявление</h1><span>Покажите работу, сроки и понятную цену.</span></div></div><form className="listing-form" onSubmit={(event) => { event.preventDefault(); onSubmit(form, () => { setForm(initial); setPreview(""); }); }}><label className="listing-cover-upload">{preview ? <img src={preview} alt="Превью работы" /> : <><b>＋</b><span>Добавить обложку работы</span><small>JPG, PNG или WebP до 650 КБ</small></>}<input type="file" accept="image/*" onChange={selectImage} /></label><label>Название услуги<input required value={form.title} onChange={(event) => update("title", event.target.value)} placeholder="Например, дизайн Telegram-канала" /></label><div className="form-split"><label>Категория<select value={form.category} onChange={(event) => update("category", event.target.value)}><option>Дизайн</option><option>Разработка</option><option>Тексты</option><option>Монтаж</option><option>Другое</option></select></label><label>Срок<select value={form.delivery_time} onChange={(event) => update("delivery_time", event.target.value)}><option>По договорённости</option><option>Сегодня</option><option>1–3 дня</option><option>До недели</option><option>Больше недели</option></select></label></div><label>Цена, ₽<input required inputMode="numeric" value={form.price} onChange={(event) => update("price", event.target.value)} placeholder="1500" /></label><label>Описание<textarea required value={form.description} onChange={(event) => update("description", event.target.value)} placeholder="Что получит покупатель, что входит в услугу и что нужно от него?" /></label><div className="form-tip"><Icon name="shield" /> Объявление проверит модератор LTeam перед публикацией.</div><button className="primary" type="submit" disabled={busy}>{busy ? "Отправляем…" : "Отправить на проверку"} <Icon name="arrow" /></button>{message && <p className="form-message">{message}</p>}</form></section>;
+  const selectPortfolio = (event) => {
+    const files = [...(event.target.files || [])].slice(0, 4 - portfolio.length);
+    files.forEach((file) => {
+      if (!file.type.startsWith("image/") || file.size > 350000) return;
+      const reader = new FileReader();
+      reader.onload = () => setPortfolio((current) => current.length < 4 ? [...current, String(reader.result || "")] : current);
+      reader.readAsDataURL(file);
+    });
+    event.target.value = "";
+  };
+  return <section className="listing-composer"><div className="page-title"><div><p className="eyebrow">Новая услуга</p><h1>Разместить объявление</h1><span>Покажите работу, сроки и понятную цену.</span></div></div><form className="listing-form" onSubmit={(event) => { event.preventDefault(); if (!preview) { setError("Добавьте обложку услуги — это обязательно."); return; } setError(""); onSubmit({ ...form, image_data: preview, portfolio_data: portfolio }, () => { setForm(initial); setPreview(""); setPortfolio([]); }); }}><label className="listing-cover-upload">{preview ? <img src={preview} alt="Превью работы" /> : <><b>＋</b><span>Добавить обложку работы</span><small>Обязательна: JPG, PNG или WebP до 650 КБ</small></>}<input type="file" accept="image/*" onChange={selectImage} /></label><label className="portfolio-upload"><b>Портфолио <small>до 4 примеров, по желанию</small></b><div>{portfolio.map((image, index) => <button type="button" key={image} onClick={() => setPortfolio((current) => current.filter((_, i) => i !== index))}><img src={image} alt="" /><span>×</span></button>)}{portfolio.length < 4 && <label>＋<input type="file" accept="image/*" multiple onChange={selectPortfolio} /></label>}</div></label><label>Название услуги<input required value={form.title} onChange={(event) => update("title", event.target.value)} placeholder="Например, дизайн Telegram-канала" /></label><div className="form-split"><label>Категория<select value={form.category} onChange={(event) => update("category", event.target.value)}><option>Дизайн</option><option>Разработка</option><option>Тексты</option><option>Монтаж</option><option>Другое</option></select></label><label>Срок<select value={form.delivery_time} onChange={(event) => update("delivery_time", event.target.value)}><option>По договорённости</option><option>Сегодня</option><option>1–3 дня</option><option>До недели</option><option>Больше недели</option></select></label></div><label>Цена, ₽<input required inputMode="numeric" value={form.price} onChange={(event) => update("price", event.target.value)} placeholder="1500" /></label><label>Описание<textarea required minLength="5" value={form.description} onChange={(event) => update("description", event.target.value)} placeholder="Что получит покупатель, что входит в услугу и что нужно от него?" /></label><div className="form-tip"><Icon name="shield" /> Объявление проверит модератор LTeam перед публикацией.</div><button className="primary" type="submit" disabled={busy}>{busy ? "Отправляем…" : "Отправить на проверку"} <Icon name="arrow" /></button>{(error || message) && <p className="form-message">{error || message}</p>}</form></section>;
 }
 
 export default function App() {
@@ -220,7 +232,7 @@ export default function App() {
   const [chat, setChat] = useState(null);
   const [adminSummary, setAdminSummary] = useState({});
   const [balance, setBalance] = useState({ available: 0, frozen: 0 });
-  const [listingForm, setListingForm] = useState({ title: "", category: "Дизайн", price: "", delivery_time: "По договорённости", description: "", image_data: "" });
+  const [listingForm, setListingForm] = useState({ title: "", category: "Дизайн", price: "", delivery_time: "По договорённости", description: "", image_data: "", portfolio_data: [] });
   const [orderForm, setOrderForm] = useState({ title: "", category: "Разработка", budget: "", deadline: "По договорённости", description: "" });
   const [formMessage, setFormMessage] = useState("");
   const [profile, setProfile] = useState({ name: tg?.initDataUnsafe?.user?.first_name || "Гость", username: tg?.initDataUnsafe?.user?.username ? `@${tg.initDataUnsafe.user.username}` : "LTeam user" });

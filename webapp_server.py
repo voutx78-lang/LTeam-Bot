@@ -310,6 +310,35 @@ def order_applications(order_id: int):
     return jsonify([dict(row) for row in rows])
 
 
+@app.post("/api/orders/<int:order_id>/applications/<int:application_id>/accept")
+def accept_order_application(order_id: int, application_id: int):
+    """Turn the chosen response into a protected order deal."""
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    with db() as connection:
+        order = connection.execute("SELECT id, customer_id, title, status FROM orders WHERE id=?", (order_id,)).fetchone()
+        if not order or int(order["customer_id"]) != user_id:
+            return jsonify({"error": "forbidden"}), 403
+        if order["status"] not in {"active", "open", "approved"}:
+            return jsonify({"error": "validation", "message": "Этот заказ уже закрыт или находится на модерации."}), 400
+        application = connection.execute("SELECT id, executor_id, price, deadline, comment, status FROM order_applications WHERE id=? AND order_id=?", (application_id, order_id)).fetchone()
+        if not application or application["status"] != "new":
+            return jsonify({"error": "not_found", "message": "Отклик недоступен."}), 404
+        amount = max(1, int(application["price"] or 0))
+        commission_percent = max(0, min(100, int(os.getenv("COMMISSION_PERCENT", "10"))))
+        commission = int(amount * commission_percent / 100)
+        payout = max(0, amount - commission)
+        now = datetime.now().isoformat()
+        cursor = connection.execute("""INSERT INTO deals (listing_id, order_id, source_type, buyer_id, seller_id, amount, commission, payout, payment_method, status, created_at)
+            VALUES (0, ?, 'order', ?, ?, ?, ?, ?, 'manual_admin_card', 'waiting_payment', ?)""", (order_id, user_id, application["executor_id"], amount, commission, payout, now))
+        connection.execute("UPDATE orders SET executor_id=?, status='assigned' WHERE id=?", (application["executor_id"], order_id))
+        connection.execute("UPDATE order_applications SET status=CASE WHEN id=? THEN 'accepted' ELSE 'declined' END, updated_at=? WHERE order_id=?", (application_id, now, order_id))
+        connection.commit()
+    notify_admins(f"Новая сделка по заказу\n\n{order['title']}\nСумма: {amount} ₽\nЗаказчик: {user_id}\nИсполнитель: {application['executor_id']}\nСтатус: ожидает оплату")
+    return jsonify({"ok": True, "deal_id": cursor.lastrowid, "status": "waiting_payment"}), 201
+
+
 def can_access_order(connection: sqlite3.Connection, order_id: int, user_id: int) -> bool:
     order = connection.execute("SELECT customer_id, executor_id FROM orders WHERE id=?", (order_id,)).fetchone()
     if not order:

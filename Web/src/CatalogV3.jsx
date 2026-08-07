@@ -11,6 +11,7 @@ const SORTS = [
 const price = (value, prefix = "от ") => `${prefix}${Number(value || 0).toLocaleString("ru-RU")} ₽`;
 const sellerName = (item) => item?.seller_name || item?.seller_username || "Исполнитель LTeam";
 const sellerNick = (item) => item?.seller_username || "lteam_user";
+const portfolio = (item) => { try { return Array.isArray(item?.portfolio_data) ? item.portfolio_data : JSON.parse(item?.portfolio_data || "[]"); } catch { return []; } };
 
 function Rating({ rating, count }) {
   const value = Number(rating || 0);
@@ -176,10 +177,11 @@ function DetailSheet({ item, onClose, onProfile, onFavorite, favorites, onCreate
   return <div className="market-modal-backdrop" role="presentation" onMouseDown={onClose}>
     <section className="market-detail-sheet" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
       <div className="sheet-handle" /><header><span>{item.category || (isService ? "Услуга" : "Заказ")}</span><button type="button" onClick={onClose}>×</button></header>
-      {item.image_data && <img className="detail-image" src={item.image_data} alt="" />}
+      {item.image_data && <img className="detail-image" src={item.image_data} alt="Обложка услуги" />}
       <h2>{item.title}</h2>
       {isService && <button type="button" className="detail-seller" onClick={() => onProfile(item.seller_id)}><Avatar name={name} image={item.avatar_url} /><span><b>{name}</b><small>@{sellerNick(item)}</small></span><Rating rating={item.avg_rating} count={item.reviews_count} /><i>›</i></button>}
       <p className="detail-description">{item.description || "Исполнитель уточнит детали после создания заказа."}</p>
+      {isService && portfolio(item).length > 0 && <section className="detail-portfolio"><h3>Портфолио</h3><div>{portfolio(item).map((image, index) => <img src={image} alt={`Пример работы ${index + 1}`} key={image} />)}</div></section>}
       <div className="detail-facts"><div><span>{isService ? "Стоимость" : "Бюджет"}</span><b>{price(isService ? item.price : item.budget, isService ? "от " : "до ")}</b></div><div><span>Срок</span><b>{isService ? item.delivery_time || "Обсуждается" : item.deadline || "Обсуждается"}</b></div></div>
       {isService ? <div className="detail-actions"><button type="button" className="secondary" onClick={() => onFavorite(item.id)}>{favorites.includes(item.id) ? "♥ В избранном" : "♡ В избранное"}</button><button type="button" className="primary" onClick={onCreate}>Создать заказ</button></div> : <div className="application-form"><h3>Отклик на заказ</h3><div><input value={application.price} onChange={(event) => setApplication({ ...application, price: event.target.value })} inputMode="numeric" placeholder="Ваша цена, ₽" /><input value={application.deadline} onChange={(event) => setApplication({ ...application, deadline: event.target.value })} placeholder="Срок выполнения" /></div><textarea value={application.comment} onChange={(event) => setApplication({ ...application, comment: event.target.value })} placeholder="Коротко расскажите, как выполните задачу" /><button type="button" className="primary" disabled={sending} onClick={onApply}>{sending ? "Отправляем…" : "Отправить отклик"}</button></div>}
     </section>

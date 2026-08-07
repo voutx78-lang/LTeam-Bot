@@ -395,6 +395,36 @@ def can_access_deal(connection: sqlite3.Connection, deal_id: int, user_id: int) 
     return bool(deal and user_id in {deal["buyer_id"], deal["seller_id"]})
 
 
+def credit_deal_payout(connection: sqlite3.Connection, seller_id: int, deal_id: int, amount: int) -> bool:
+    """Idempotently credit a completed deal without allowing a double payout."""
+    already_credited = connection.execute(
+        "SELECT 1 FROM balance_transactions WHERE deal_id=? AND tx_type='deal_credit' LIMIT 1",
+        (deal_id,),
+    ).fetchone()
+    if already_credited:
+        return False
+    now = datetime.now().isoformat()
+    connection.execute(
+        """INSERT OR IGNORE INTO user_balances
+           (user_id, available, frozen, total_earned, total_withdrawn, updated_at)
+           VALUES (?, 0, 0, 0, 0, ?)""",
+        (seller_id, now),
+    )
+    connection.execute(
+        """UPDATE user_balances SET available=COALESCE(available,0)+?,
+           total_earned=COALESCE(total_earned,0)+?, updated_at=? WHERE user_id=?""",
+        (amount, amount, now, seller_id),
+    )
+    balance_row = connection.execute("SELECT COALESCE(available,0) FROM user_balances WHERE user_id=?", (seller_id,)).fetchone()
+    connection.execute(
+        """INSERT INTO balance_transactions
+           (user_id, deal_id, withdrawal_id, tx_type, amount, balance_after, comment, created_at)
+           VALUES (?, ?, NULL, 'deal_credit', ?, ?, ?, ?)""",
+        (seller_id, deal_id, amount, int(balance_row[0] or 0), f"Сделка #{deal_id} завершена покупателем", now),
+    )
+    return True
+
+
 @app.get("/api/orders/<int:order_id>/messages")
 def order_messages(order_id: int):
     user_id = current_user_id()
@@ -466,6 +496,74 @@ def deals():
             FROM deals d LEFT JOIN listings l ON l.id=d.listing_id LEFT JOIN orders o ON o.id=d.order_id
             WHERE d.buyer_id=? OR d.seller_id=? ORDER BY d.id DESC LIMIT 50""", (user_id, user_id)).fetchall()
     return jsonify([dict(row) for row in rows])
+
+
+@app.post("/api/deals/<int:deal_id>/action")
+def deal_action(deal_id: int):
+    """Protected MiniApp lifecycle actions; payment approval itself remains with admins."""
+    user_id = current_user_id()
+    payload = request.get_json(silent=True) or {}
+    action = str(payload.get("action", "")).strip()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    with db() as connection:
+        deal = connection.execute(
+            "SELECT id, buyer_id, seller_id, amount, commission, payout, status FROM deals WHERE id=?",
+            (deal_id,),
+        ).fetchone()
+        if not deal or user_id not in {int(deal["buyer_id"]), int(deal["seller_id"])}:
+            return jsonify({"error": "forbidden"}), 403
+        now = datetime.now().isoformat()
+        buyer_id, seller_id, status = int(deal["buyer_id"]), int(deal["seller_id"]), str(deal["status"])
+
+        if action == "set_final_price":
+            try:
+                amount = int(payload.get("amount", 0))
+            except (TypeError, ValueError):
+                amount = 0
+            if user_id != seller_id or status != "discussion" or amount < 100 or amount > 150000:
+                return jsonify({"error": "validation", "message": "Итоговую цену может выставить исполнитель после обсуждения."}), 400
+            percent = max(0, min(100, int(os.getenv("COMMISSION_PERCENT", "10"))))
+            commission = int(amount * percent / 100)
+            payout = amount - commission
+            connection.execute("""UPDATE deals SET amount=?, commission=?, payout=?, status='waiting_buyer_price_confirm',
+                final_price_set_by=? WHERE id=?""", (amount, commission, payout, user_id, deal_id))
+            target_user, notice = buyer_id, f"Исполнитель выставил итоговую цену по сделке #{deal_id}. Подтвердите её в MiniApp."
+        elif action == "confirm_price":
+            if user_id != buyer_id or status != "waiting_buyer_price_confirm":
+                return jsonify({"error": "validation", "message": "Подтверждение цены сейчас недоступно."}), 400
+            connection.execute("""UPDATE deals SET status='waiting_admin_payment_approval',
+                final_price_confirmed_by=?, payment_requested_by=? WHERE id=?""", (user_id, user_id, deal_id))
+            target_user, notice = seller_id, f"Покупатель подтвердил цену по сделке #{deal_id}. Ожидаем разрешение оплаты администратором."
+            notify_admins(f"Нужна проверка оплаты по сделке #{deal_id}. Сумма: {int(deal['amount'] or 0)} ₽")
+        elif action == "mark_done":
+            if user_id != seller_id or status != "in_work":
+                return jsonify({"error": "validation", "message": "Отметить работу выполненной можно после подтверждения оплаты."}), 400
+            connection.execute("UPDATE deals SET status='waiting_buyer_confirm' WHERE id=?", (deal_id,))
+            target_user, notice = buyer_id, f"Исполнитель отметил работу по сделке #{deal_id} выполненной. Проверьте результат."
+        elif action == "confirm_done":
+            if user_id != buyer_id or status != "waiting_buyer_confirm":
+                return jsonify({"error": "validation", "message": "Подтверждение выполнения сейчас недоступно."}), 400
+            connection.execute("UPDATE deals SET status='completed' WHERE id=?", (deal_id,))
+            credited = credit_deal_payout(connection, seller_id, deal_id, int(deal["payout"] or 0))
+            target_user, notice = seller_id, f"Сделка #{deal_id} завершена. На баланс зачислено: {int(deal['payout'] or 0)} ₽."
+        elif action == "open_dispute":
+            reason = str(payload.get("reason", "")).strip()[:1200]
+            if status in {"completed", "cancelled", "dispute_open"} or len(reason) < 5:
+                return jsonify({"error": "validation", "message": "Опишите проблему подробнее; спор нельзя открыть по закрытой сделке."}), 400
+            existing = connection.execute("SELECT id FROM deal_disputes WHERE deal_id=? AND status='open'", (deal_id,)).fetchone()
+            if existing:
+                return jsonify({"error": "validation", "message": "По этой сделке уже открыт спор."}), 400
+            connection.execute("INSERT INTO deal_disputes (deal_id, opened_by, buyer_id, seller_id, reason, status, created_at) VALUES (?, ?, ?, ?, ?, 'open', ?)", (deal_id, user_id, buyer_id, seller_id, reason, now))
+            connection.execute("UPDATE deals SET status='dispute_open' WHERE id=?", (deal_id,))
+            target_user = seller_id if user_id == buyer_id else buyer_id
+            notice = f"По сделке #{deal_id} открыт спор. Администратор LTeam проверит ситуацию."
+            notify_admins(f"Открыт спор по сделке #{deal_id}. Причина: {reason}")
+        else:
+            return jsonify({"error": "validation", "message": "Неизвестное действие по сделке."}), 400
+        connection.commit()
+    notify_user(target_user, notice)
+    return jsonify({"ok": True, "status": "completed" if action == "confirm_done" else ({"set_final_price": "waiting_buyer_price_confirm", "confirm_price": "waiting_admin_payment_approval", "mark_done": "waiting_buyer_confirm", "open_dispute": "dispute_open"}[action])})
 
 
 @app.get("/api/balance")

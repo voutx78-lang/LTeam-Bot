@@ -708,6 +708,33 @@ def admin_moderation_queue():
     return jsonify([dict(row) for row in [*listings_rows, *order_rows]])
 
 
+@app.get("/api/admin/queues/<queue_name>")
+def admin_operation_queue(queue_name: str):
+    """Compact operational queues for the private MiniApp admin workspace."""
+    if int(get_user().get("id", 0)) not in ADMIN_IDS:
+        return jsonify({"error": "forbidden"}), 403
+    if queue_name not in {"payments", "payouts", "disputes"}:
+        return jsonify({"error": "not_found"}), 404
+    with db() as connection:
+        if queue_name == "payments":
+            rows = connection.execute("""SELECT d.id, COALESCE(o.title, l.title, 'Сделка LTeam') AS title,
+                d.amount, d.status, d.buyer_id, d.seller_id, COALESCE(d.receipt, '') AS note, d.created_at
+                FROM deals d LEFT JOIN orders o ON o.id=d.order_id LEFT JOIN listings l ON l.id=d.listing_id
+                WHERE d.status IN ('waiting_admin_payment_approval', 'waiting_admin_confirm')
+                ORDER BY d.id ASC LIMIT 50""").fetchall()
+        elif queue_name == "payouts":
+            rows = connection.execute("""SELECT id, 'Вывод средств' AS title, amount, status, user_id,
+                COALESCE(requisites, '') AS note, created_at FROM withdrawal_requests
+                WHERE status='pending' ORDER BY id ASC LIMIT 50""").fetchall()
+        else:
+            rows = connection.execute("""SELECT dd.id, COALESCE(o.title, l.title, 'Спор по сделке') AS title,
+                d.amount, d.status, dd.opened_by AS user_id, dd.reason AS note, dd.created_at, dd.deal_id
+                FROM deal_disputes dd JOIN deals d ON d.id=dd.deal_id
+                LEFT JOIN orders o ON o.id=d.order_id LEFT JOIN listings l ON l.id=d.listing_id
+                WHERE dd.status='open' ORDER BY dd.id ASC LIMIT 50""").fetchall()
+    return jsonify([dict(row) for row in rows])
+
+
 @app.post("/api/admin/moderation/<item_type>/<int:item_id>")
 def admin_moderation_decision(item_type: str, item_id: int):
     admin_id = current_user_id()

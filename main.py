@@ -9568,18 +9568,65 @@ async def order_description(message: Message, state: FSMContext):
     except Exception:
         pass
 
-    data = await state.get_data()
-    text, keyboard = build_order_preview(data)
-    row = get_screen(message.from_user.id)
-    if row:
-        chat_id, message_id = row
-        try:
-            await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=keyboard, parse_mode="HTML")
-            return
-        except Exception:
-            pass
-    sent = await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
-    save_screen(message.from_user.id, sent.chat.id, sent.message_id)
+    await state.set_state(CreateOrder.reference_photo)
+    await screen_answer(
+        message,
+        "🖼 <b>Пример для исполнителя</b>\n\n"
+        "Можно прикрепить одну картинку с примером результата, референсом или техническим заданием. "
+        "Этот шаг необязательный — без картинки заказ тоже будет опубликован.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Продолжить без картинки", callback_data="order_skip_reference")],
+            [InlineKeyboardButton(text="⬅️ Изменить описание", callback_data="order_back_deadline"), InlineKeyboardButton(text="❌ Отменить", callback_data="order_cancel")],
+        ]),
+        parse_mode="HTML",
+    )
+
+@dp.message(CreateOrder.reference_photo, F.photo)
+async def order_reference_photo(message: Message, state: FSMContext):
+    await state.update_data(reference_image_data=f"tg:{message.photo[-1].file_id}")
+    text, keyboard = build_order_preview(await state.get_data())
+    await screen_answer(message, text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@dp.message(CreateOrder.reference_photo)
+async def order_reference_photo_required(message: Message):
+    await screen_answer(
+        message,
+        "Отправьте одну картинку-пример или нажмите «Продолжить без картинки».",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Продолжить без картинки", callback_data="order_skip_reference")],
+            [InlineKeyboardButton(text="⬅️ Изменить описание", callback_data="order_back_deadline"), InlineKeyboardButton(text="❌ Отменить", callback_data="order_cancel")],
+        ]),
+    )
+
+
+@dp.callback_query(F.data == "order_skip_reference")
+async def order_skip_reference(call: CallbackQuery, state: FSMContext):
+    text, keyboard = build_order_preview(await state.get_data())
+    await show_screen(call, text, reply_markup=keyboard, parse_mode="HTML")
+    await call.answer()
+
+
+@dp.callback_query(F.data == "order_add_reference")
+async def order_add_reference(call: CallbackQuery, state: FSMContext):
+    await state.set_state(CreateOrder.reference_photo)
+    await show_screen(
+        call,
+        "🖼 <b>Пример для исполнителя</b>\n\nОтправьте одну картинку с референсом или техническим заданием.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Продолжить без картинки", callback_data="order_skip_reference")],
+            [InlineKeyboardButton(text="⬅️ К предпросмотру", callback_data="order_preview")],
+        ]),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@dp.callback_query(F.data == "order_preview")
+async def order_preview_return(call: CallbackQuery, state: FSMContext):
+    text, keyboard = build_order_preview(await state.get_data())
+    await show_screen(call, text, reply_markup=keyboard, parse_mode="HTML")
+    await call.answer()
 
 
 def build_order_preview(data: dict):
@@ -9601,6 +9648,7 @@ def build_order_preview(data: dict):
 """
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Отправить на модерацию", callback_data="order_publish")],
+        [InlineKeyboardButton(text="🖼 Изменить референс", callback_data="order_add_reference")],
         [InlineKeyboardButton(text="✏️ Изменить описание", callback_data="order_back_deadline")],
         [InlineKeyboardButton(text="🔄 Создать заново", callback_data="create_order")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"), InlineKeyboardButton(text="❌ Отменить", callback_data="order_cancel")],
@@ -9635,8 +9683,8 @@ async def order_publish(call: CallbackQuery, state: FSMContext):
     with db() as conn:
         cur = conn.cursor()
         cur.execute("""
-        INSERT INTO orders (customer_id, title, category, budget, description, deadline, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO orders (customer_id, title, category, budget, description, deadline, reference_image_data, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             call.from_user.id,
             data["title"],
@@ -9644,6 +9692,7 @@ async def order_publish(call: CallbackQuery, state: FSMContext):
             data["budget"],
             data["description"],
             data["deadline"],
+            data.get("reference_image_data", ""),
             "moderation",
             datetime.now().isoformat()
         ))

@@ -204,7 +204,7 @@ def orders():
         return jsonify({"error": "unauthorized"}), 401
     with db() as connection:
         rows = connection.execute("""SELECT o.id, o.customer_id, o.title, o.category, o.budget, COALESCE(o.description, '') AS description,
-            o.status, o.deadline, o.created_at, COALESCE(u.username, '') AS customer_username, COALESCE(u.display_name, '') AS customer_name
+            o.status, o.deadline, o.created_at, COALESCE(o.reference_image_data, '') AS reference_image_data, COALESCE(u.username, '') AS customer_username, COALESCE(u.display_name, '') AS customer_name
             FROM orders o LEFT JOIN users u ON u.user_id=o.customer_id
             WHERE o.status IN ('active','open','approved') OR o.customer_id=? ORDER BY o.id DESC LIMIT 50""", (user_id,)).fetchall()
     return jsonify([dict(row) for row in rows])
@@ -221,6 +221,9 @@ def create_order():
     category = str(payload.get("category", "Другое")).strip()[:80]
     description = str(payload.get("description", "")).strip()[:2000]
     deadline = str(payload.get("deadline", "По договорённости")).strip()[:80]
+    reference_image_data = str(payload.get("reference_image_data", "")).strip()
+    if reference_image_data and (not reference_image_data.startswith("data:image/") or len(reference_image_data) > 900_000):
+        return jsonify({"error": "validation", "message": "Референс должен быть картинкой до 650 КБ."}), 400
     try:
         budget = max(1, int(payload.get("budget", 0)))
     except (TypeError, ValueError):
@@ -229,9 +232,9 @@ def create_order():
         return jsonify({"error": "validation", "message": "Заполните название, описание и бюджет."}), 400
     with db() as connection:
         cursor = connection.execute(
-            """INSERT INTO orders (customer_id, title, category, budget, description, deadline, status, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (user_id, title, category, budget, description, deadline, "moderation", datetime.now().isoformat()),
+            """INSERT INTO orders (customer_id, title, category, budget, description, deadline, reference_image_data, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, title, category, budget, description, deadline, reference_image_data, "moderation", datetime.now().isoformat()),
         )
         connection.commit()
     notify_admins(f"Новый заказ на модерации\n\n{title}\nКатегория: {category}\nБюджет: до {budget} ₽\nАвтор: {user_id}")

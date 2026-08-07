@@ -8,8 +8,8 @@ import sqlite3
 import time
 from io import BytesIO
 from pathlib import Path
-from urllib.parse import parse_qsl
-from urllib.request import urlopen
+from urllib.parse import parse_qsl, urlencode
+from urllib.request import Request, urlopen
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request, send_file, send_from_directory
@@ -29,6 +29,18 @@ def avatar_endpoint(user_id: int) -> str:
 
 def listing_cover_endpoint(listing_id: int) -> str:
     return f"{request.host_url.rstrip('/')}/api/listings/{listing_id}/cover"
+
+
+def notify_admins(text: str) -> None:
+    """Best-effort notification for MiniApp actions; the marketplace action itself stays available if Telegram is slow."""
+    if not BOT_TOKEN:
+        return
+    for admin_id in ADMIN_IDS:
+        try:
+            body = urlencode({"chat_id": admin_id, "text": text}).encode()
+            urlopen(Request(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data=body), timeout=4).read()
+        except Exception:
+            continue
 
 
 @app.after_request
@@ -181,6 +193,7 @@ def create_listing():
             (user_id, title, category, "Услуга", "new", price, description, delivery_time, image_data, json.dumps(portfolio, ensure_ascii=False), "pending", datetime.now().isoformat()),
         )
         connection.commit()
+    notify_admins(f"Новая услуга на модерации\n\n{title}\nКатегория: {category}\nЦена: {price} ₽\nАвтор: {user_id}")
     return jsonify({"ok": True, "listing_id": cursor.lastrowid, "status": "pending"}), 201
 
 
@@ -221,6 +234,7 @@ def create_order():
             (user_id, title, category, budget, description, deadline, "moderation", datetime.now().isoformat()),
         )
         connection.commit()
+    notify_admins(f"Новый заказ на модерации\n\n{title}\nКатегория: {category}\nБюджет: до {budget} ₽\nАвтор: {user_id}")
     return jsonify({"ok": True, "order_id": cursor.lastrowid, "status": "moderation"}), 201
 
 

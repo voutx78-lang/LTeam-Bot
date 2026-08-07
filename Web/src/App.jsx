@@ -28,11 +28,14 @@ import CatalogV3 from "./CatalogV3";
 import OrdersWorkspace from "./OrdersWorkspace";
 import MyListingsWorkspace from "./MyListingsWorkspace";
 import AdminWorkspace from "./AdminWorkspace";
+import WalletWorkspace from "./WalletWorkspace";
 import OrderComposer from "./OrderComposer";
 import "./OrderComposer.css";
 import "./SellerProfileExtra.css";
 import "./ApplicantsSheet.css";
 import "./AdminWorkspace.css";
+import "./WalletWorkspace.css";
+import "./WalletOverlay.css";
 
 const tg = window.Telegram?.WebApp;
 const API_BASE = import.meta.env.VITE_API_URL || "https://lteam-botminiapp.onrender.com";
@@ -371,6 +374,7 @@ export default function App() {
     {tab === "orders" && <OrdersWorkspace orders={orderItems} deals={dealItems} profile={profile} fetchData={apiFetch} request={apiRequest} onNavigate={setTab} onChat={setChat} />}
     {tab === "my-listings" && <MyListingsWorkspace fetchData={apiFetch} onNavigate={setTab} />}
     {isAdmin && tab === "admin" && <AdminWorkspace summary={adminSummary} onNavigate={setTab} onOpenBot={(section) => section === "admin_panel" ? sendToBot("admin_panel") : sendToBot("admin_open", { section })} />}
+    {tab === "wallet" && <WalletWorkspace balance={balance} fetchData={apiFetch} onNavigate={setTab} onWithdraw={() => sendToBot("withdraw_start")} />}
     <nav className="bottom-nav">{navItems.map(([id, icon, label]) => <button className={tab === id ? "active" : ""} key={id} onClick={() => setTab(id)}><Icon name={icon} /><span>{label}</span></button>)}</nav>
     {settingsOpen && <SettingsSheet theme={theme} setTheme={setTheme} onClose={() => setSettingsOpen(false)} />}
     {toast && <div className="toast"><span>✓</span>{toast}</div>}

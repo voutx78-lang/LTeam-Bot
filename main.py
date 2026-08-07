@@ -4333,20 +4333,20 @@ async def listing_back_price(call: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "skip_desc")
 async def skip_description(call: CallbackQuery, state: FSMContext):
-    await state.update_data(description="Без описания")
-    await listing_preview(call, state)
-    await call.answer()
+    await call.answer("Описание услуги обязательно. Опишите, что получит покупатель.", show_alert=True)
 
 
 @dp.message(CreateListing.description)
 async def listing_description(message: Message, state: FSMContext):
-    description = (message.text or "").strip() or "Без описания"
-    if description != "Без описания":
-        ok, reason = moderation_check(description)
-        if not ok:
-            await screen_answer(message, f"🚫 Описание не прошло авто-модерацию: {html.escape(reason)}", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="listing_back_price"), InlineKeyboardButton(text="❌ Отменить", callback_data="listing_cancel")]]), parse_mode="HTML")
-            await notify_admins(f"⚠️ <b>Авто-модерация описания объявления</b>\n\nПользователь: <code>{message.from_user.id}</code>\nПричина: {html.escape(reason)}\nТекст: {html.escape(description)}")
-            return
+    description = (message.text or "").strip()
+    if len(description) < 5:
+        await screen_answer(message, "Описание обязательно. Напишите хотя бы несколько слов о вашей услуге.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="listing_back_price"), InlineKeyboardButton(text="❌ Отменить", callback_data="listing_cancel")]]))
+        return
+    ok, reason = moderation_check(description)
+    if not ok:
+        await screen_answer(message, f"🚫 Описание не прошло авто-модерацию: {html.escape(reason)}", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="listing_back_price"), InlineKeyboardButton(text="❌ Отменить", callback_data="listing_cancel")]]), parse_mode="HTML")
+        await notify_admins(f"⚠️ <b>Авто-модерация описания объявления</b>\n\nПользователь: <code>{message.from_user.id}</code>\nПричина: {html.escape(reason)}\nТекст: {html.escape(description)}")
+        return
     await state.update_data(description=description)
     try:
         await message.delete()
@@ -4389,6 +4389,7 @@ def build_listing_preview(data: dict):
 Отправляем объявление на модерацию?
 """
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🖼 Добавить обложку", callback_data="listing_add_cover")],
         [InlineKeyboardButton(text="✅ Отправить на модерацию", callback_data="listing_publish")],
         [InlineKeyboardButton(text="⬅️ Изменить описание", callback_data="listing_back_price")],
         [InlineKeyboardButton(text="✏️ Создать заново", callback_data="create_listing")],
@@ -4400,6 +4401,39 @@ def build_listing_preview(data: dict):
 async def listing_preview(call: CallbackQuery, state: FSMContext):
     text, keyboard = build_listing_preview(await state.get_data())
     await show_screen(call, text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@dp.callback_query(F.data == "listing_add_cover")
+async def listing_add_cover(call: CallbackQuery, state: FSMContext):
+    await state.set_state(CreateListing.cover_photo)
+    await show_screen(call, "🖼 <b>Обложка услуги</b>\n\nОтправьте одну картинку. Она обязательна для публикации услуги и будет показана в MiniApp.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ К предпросмотру", callback_data="listing_preview")], [InlineKeyboardButton(text="❌ Отменить", callback_data="listing_cancel")]]), parse_mode="HTML")
+    await call.answer()
+
+
+@dp.callback_query(F.data == "listing_preview")
+async def listing_preview_return(call: CallbackQuery, state: FSMContext):
+    await listing_preview(call, state)
+    await call.answer()
+
+
+@dp.message(CreateListing.cover_photo, F.photo)
+async def listing_cover_photo(message: Message, state: FSMContext):
+    await state.update_data(image_data=f"tg:{message.photo[-1].file_id}")
+    row = get_screen(message.from_user.id)
+    text, keyboard = build_listing_preview(await state.get_data())
+    if row:
+        try:
+            await bot.edit_message_text(text, chat_id=row[0], message_id=row[1], reply_markup=keyboard, parse_mode="HTML")
+            return
+        except Exception:
+            pass
+    sent = await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+    save_screen(message.from_user.id, sent.chat.id, sent.message_id)
+
+
+@dp.message(CreateListing.cover_photo)
+async def listing_cover_photo_required(message: Message):
+    await screen_answer(message, "Отправьте картинку — она будет обложкой услуги.")
 
 
 @dp.callback_query(F.data == "listing_publish")
@@ -4421,7 +4455,7 @@ async def listing_publish(call: CallbackQuery, state: FSMContext):
         return
 
     data = await state.get_data()
-    required = ["title", "category", "item_type", "delivery_time", "price"]
+    required = ["title", "category", "item_type", "delivery_time", "price", "description", "image_data"]
     if any(k not in data for k in required):
         await call.answer("Данные объявления не найдены. Создайте заново.", show_alert=True)
         return
@@ -4434,8 +4468,8 @@ async def listing_publish(call: CallbackQuery, state: FSMContext):
     with db() as conn:
         cur = conn.cursor()
         cur.execute("""
-        INSERT INTO listings (seller_id, title, category, item_type, condition, price, description, seller_requisites, delivery_time, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO listings (seller_id, title, category, item_type, condition, price, description, seller_requisites, delivery_time, image_data, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             seller_id,
             data["title"],
@@ -4446,6 +4480,7 @@ async def listing_publish(call: CallbackQuery, state: FSMContext):
             description,
             "",
             data.get("delivery_time", ""),
+            data.get("image_data", ""),
             "moderation",
             datetime.now().isoformat()
         ))

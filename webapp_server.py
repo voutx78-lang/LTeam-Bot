@@ -95,6 +95,10 @@ def create_listing():
     title = str(payload.get("title", "")).strip()[:120]
     category = str(payload.get("category", "Другое")).strip()[:80]
     description = str(payload.get("description", "")).strip()[:2000]
+    delivery_time = str(payload.get("delivery_time", "По договорённости")).strip()[:80]
+    image_data = str(payload.get("image_data", "")).strip()
+    if image_data and (not image_data.startswith("data:image/") or len(image_data) > 900_000):
+        return jsonify({"error": "validation", "message": "Изображение должно быть картинкой до 650 КБ."}), 400
     try:
         price = max(1, int(payload.get("price", 0)))
     except (TypeError, ValueError):
@@ -103,9 +107,9 @@ def create_listing():
         return jsonify({"error": "validation", "message": "Заполните название, описание и цену."}), 400
     with db() as connection:
         cursor = connection.execute(
-            """INSERT INTO listings (seller_id, title, category, item_type, condition, price, description, status, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (user_id, title, category, "Услуга", "new", price, description, "pending", datetime.now().isoformat()),
+            """INSERT INTO listings (seller_id, title, category, item_type, condition, price, description, delivery_time, image_data, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, title, category, "Услуга", "new", price, description, delivery_time, image_data, "pending", datetime.now().isoformat()),
         )
         connection.commit()
     return jsonify({"ok": True, "listing_id": cursor.lastrowid, "status": "pending"}), 201

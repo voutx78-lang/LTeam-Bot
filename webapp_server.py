@@ -452,6 +452,7 @@ def send_order_message(order_id: int):
         receiver_id = order["executor_id"] if order["customer_id"] == user_id else order["customer_id"]
         cursor = connection.execute("INSERT INTO order_messages(order_id, sender_id, receiver_id, text, created_at) VALUES (?, ?, ?, ?, ?)", (order_id, user_id, receiver_id, text, datetime.now().isoformat()))
         connection.commit()
+    notify_user(int(receiver_id or 0), f"Новое сообщение по заказу: {text[:160]}")
     return jsonify({"ok": True, "id": cursor.lastrowid}), 201
 
 
@@ -482,6 +483,7 @@ def send_deal_message(deal_id: int):
         receiver_id = deal["seller_id"] if deal["buyer_id"] == user_id else deal["buyer_id"]
         cursor = connection.execute("INSERT INTO deal_messages(deal_id, sender_id, receiver_id, text, created_at) VALUES (?, ?, ?, ?, ?)", (deal_id, user_id, receiver_id, text, datetime.now().isoformat()))
         connection.commit()
+    notify_user(int(receiver_id or 0), f"Новое сообщение по сделке #{deal_id}: {text[:160]}")
     return jsonify({"ok": True, "id": cursor.lastrowid}), 201
 
 

@@ -20,6 +20,8 @@ load_dotenv(BASE_DIR / ".env")
 from app.database import db as shared_db
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_IDS = {int(value.strip()) for value in os.getenv("ADMIN_IDS", "").split(",") if value.strip().isdigit()}
+OWNER_IDS = {int(value.strip()) for value in os.getenv("OWNER_IDS", "").split(",") if value.strip().isdigit()}
+STAFF_ADMIN_IDS = ADMIN_IDS | OWNER_IDS
 app = Flask(__name__, static_folder=str(BASE_DIR / "Web" / "dist"), static_url_path="")
 AVATAR_CACHE: dict[int, tuple[float, bytes, str]] = {}
 
@@ -36,7 +38,7 @@ def notify_admins(text: str) -> None:
     """Best-effort notification for MiniApp actions; the marketplace action itself stays available if Telegram is slow."""
     if not BOT_TOKEN:
         return
-    for admin_id in ADMIN_IDS:
+    for admin_id in STAFF_ADMIN_IDS:
         try:
             body = urlencode({"chat_id": admin_id, "text": text}).encode()
             urlopen(Request(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data=body), timeout=4).read()
@@ -115,7 +117,7 @@ def me():
     user = get_user()
     if not user:
         return jsonify({"authenticated": False, "is_admin": False})
-    return jsonify({"authenticated": True, "id": user.get("id"), "name": " ".join(filter(None, [user.get("first_name"), user.get("last_name")])), "username": user.get("username", ""), "is_admin": int(user.get("id", 0)) in ADMIN_IDS})
+    return jsonify({"authenticated": True, "id": user.get("id"), "name": " ".join(filter(None, [user.get("first_name"), user.get("last_name")])), "username": user.get("username", ""), "is_admin": int(user.get("id", 0)) in STAFF_ADMIN_IDS})
 
 
 @app.get("/api/listings")
@@ -684,7 +686,7 @@ def create_review(deal_id: int):
 
 @app.get("/api/admin/summary")
 def admin_summary():
-    if int(get_user().get("id", 0)) not in ADMIN_IDS:
+    if int(get_user().get("id", 0)) not in STAFF_ADMIN_IDS:
         return jsonify({"error": "forbidden"}), 403
     with db() as connection:
         payments = connection.execute("SELECT COUNT(*) FROM deals WHERE status IN ('waiting_payment','waiting_admin_confirm')").fetchone()[0]
@@ -696,7 +698,7 @@ def admin_summary():
 
 @app.get("/api/admin/moderation")
 def admin_moderation_queue():
-    if int(get_user().get("id", 0)) not in ADMIN_IDS:
+    if int(get_user().get("id", 0)) not in STAFF_ADMIN_IDS:
         return jsonify({"error": "forbidden"}), 403
     with db() as connection:
         listings_rows = connection.execute("""SELECT id, seller_id AS author_id, title, category, price AS amount,
@@ -711,7 +713,7 @@ def admin_moderation_queue():
 @app.get("/api/admin/queues/<queue_name>")
 def admin_operation_queue(queue_name: str):
     """Compact operational queues for the private MiniApp admin workspace."""
-    if int(get_user().get("id", 0)) not in ADMIN_IDS:
+    if int(get_user().get("id", 0)) not in STAFF_ADMIN_IDS:
         return jsonify({"error": "forbidden"}), 403
     if queue_name not in {"payments", "payouts", "disputes"}:
         return jsonify({"error": "not_found"}), 404
@@ -738,7 +740,7 @@ def admin_operation_queue(queue_name: str):
 @app.post("/api/admin/moderation/<item_type>/<int:item_id>")
 def admin_moderation_decision(item_type: str, item_id: int):
     admin_id = current_user_id()
-    if not admin_id or admin_id not in ADMIN_IDS:
+    if not admin_id or admin_id not in STAFF_ADMIN_IDS:
         return jsonify({"error": "forbidden"}), 403
     payload = request.get_json(silent=True) or {}
     action = str(payload.get("action", "")).lower()

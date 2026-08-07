@@ -1,0 +1,6 @@
+const price = (value) => `от ${Number(value || 0).toLocaleString("ru-RU")} ₽`;
+
+export default function FavoritesWorkspace({ items = [], favorites = [], onToggle, onNavigate }) {
+  const saved = items.filter((item) => favorites.includes(item.id));
+  return <section className="favorites-workspace"><header className="favorites-head"><button onClick={() => onNavigate("profile")}>←</button><div><p>ВАША ПОДБОРКА</p><h1>Избранное</h1></div><span>{saved.length}</span></header>{saved.length ? <div className="favorites-list">{saved.map((item) => <article key={item.id}><div className="favorite-cover">{item.image_data ? <img src={item.image_data} alt="" /> : <span>LT</span>}</div><div><small>{item.category || "Услуга"}</small><b>{item.title}</b><span>{item.delivery_time || "Срок обсуждается"}</span><strong>{price(item.price)}</strong></div><button aria-label="Убрать из избранного" onClick={() => onToggle(item.id)}>♥</button></article>)}</div> : <div className="favorites-empty"><i>♡</i><b>Здесь пока пусто</b><span>Сохраняйте понравившиеся услуги, чтобы вернуться к ним позже.</span><button onClick={() => onNavigate("catalog")}>Открыть каталог <em>→</em></button></div>}<button className="favorites-explore" onClick={() => onNavigate("catalog")}>Продолжить поиск в каталоге <span>→</span></button></section>;
+}

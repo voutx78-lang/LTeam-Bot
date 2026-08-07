@@ -86,7 +86,7 @@ export default function CatalogV3({ items = [], orders = [], favorites = [], onF
     if (!detail?.id) return;
     setSending(true);
     try {
-      await request(`/api/orders/${detail.id}/applications`, application);
+      await request(`/api/orders/${detail.id}/applications`, "POST", application);
       setNotice("Отклик отправлен заказчику.");
       setDetail(null);
       setApplication({ price: "", deadline: "", comment: "" });

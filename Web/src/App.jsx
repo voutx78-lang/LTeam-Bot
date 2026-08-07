@@ -29,6 +29,7 @@ import OrdersWorkspace from "./OrdersWorkspace";
 import MyListingsWorkspace from "./MyListingsWorkspace";
 import OrderComposer from "./OrderComposer";
 import "./OrderComposer.css";
+import "./SellerProfileExtra.css";
 
 const tg = window.Telegram?.WebApp;
 const API_BASE = import.meta.env.VITE_API_URL || "https://lteam-botminiapp.onrender.com";

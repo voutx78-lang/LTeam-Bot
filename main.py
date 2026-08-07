@@ -13685,6 +13685,13 @@ async def main():
 
     try:
         await setup_bot_commands()
+        if WEBAPP_URL.startswith("https://"):
+            await bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(
+                    text="LTeam Market",
+                    web_app=WebAppInfo(url=WEBAPP_URL),
+                )
+            )
         print("✅ Команды бота установлены")
     except Exception as e:
         print(f"⚠️ Команды бота не установлены: {e}")

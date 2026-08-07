@@ -27,10 +27,12 @@ import "./SellerProfile.css";
 import CatalogV3 from "./CatalogV3";
 import OrdersWorkspace from "./OrdersWorkspace";
 import MyListingsWorkspace from "./MyListingsWorkspace";
+import AdminWorkspace from "./AdminWorkspace";
 import OrderComposer from "./OrderComposer";
 import "./OrderComposer.css";
 import "./SellerProfileExtra.css";
 import "./ApplicantsSheet.css";
+import "./AdminWorkspace.css";
 
 const tg = window.Telegram?.WebApp;
 const API_BASE = import.meta.env.VITE_API_URL || "https://lteam-botminiapp.onrender.com";
@@ -112,7 +114,7 @@ function DealCard({ deal }) {
   </article>
 }
 
-function AdminPanel({ summary = {} }) {
+function AdminPanel({ summary = {}, onOpen }) {
   return <section className="admin-panel">
     <div className="section-heading"><div><p className="eyebrow">Управление</p><h2>Админ-панель</h2></div><span className="admin-badge">ADMIN</span></div>
     <div className="admin-stats"><div><span>На проверке</span><b>{summary.payments ?? 0}</b></div><div><span>Споры</span><b>{summary.disputes ?? 0}</b></div><div><span>Выплаты</span><b>{summary.payouts ?? 0}</b></div></div>
@@ -121,6 +123,7 @@ function AdminPanel({ summary = {} }) {
       <button onClick={() => sendToBot("admin_open", { section: "disputes" })}><Icon name="shield" /><span>Открытые споры</span><Icon name="arrow" /></button>
       <button onClick={() => sendToBot("admin_open", { section: "payouts" })}><Icon name="check" /><span>Подтвердить выплаты</span><Icon name="arrow" /></button>
     </div>
+    <button className="admin-open-workspace" onClick={onOpen}>Открыть центр управления <Icon name="arrow" /></button>
   </section>
 }
 
@@ -358,7 +361,7 @@ export default function App() {
 
     {tab === "wallet" && <section><div className="page-title"><div><p className="eyebrow">Финансы</p><h1>Баланс</h1></div><button className="round-button" onClick={() => sendToBot("balance_history")}><Icon name="orders" /></button></div><div className="balance-card"><p>Доступно к выводу</p><h2>{Number(balance.available || 0).toLocaleString("ru-RU")} ₽</h2><span>В обработке у гаранта: {Number(balance.frozen || 0).toLocaleString("ru-RU")} ₽</span><button className="primary" onClick={() => sendToBot("withdraw_start")}>Вывести средства <Icon name="arrow" /></button></div><div className="list-row"><span className="list-icon mint"><Icon name="wallet" /></span><div><b>История операций</b><small>Пополнения, сделки и выплаты</small></div><Icon name="arrow" /></div></section>}
 
-    {tab === "profile" && <section><div className="profile-card"><span className="avatar large">{profile.name.slice(0, 1).toUpperCase()}</span><div><p className="eyebrow">Профиль LTeam</p><h1>{profile.name}</h1><span>{profile.username}</span><small className={`sync-status ${isSynced ? "online" : "offline"}`}>{isSynced ? "● Синхронизирован с ботом" : "○ Требуется синхронизация с ботом"}</small></div><button className="round-button" onClick={() => setSettingsOpen(true)}>⚙</button></div><div className="profile-stats"><div><b>{orderItems.length}</b><span>Заказов</span></div><div><b>{dealItems.length}</b><span>Сделок</span></div><div><b>{catalogListings.filter((item) => Number(item.seller_id) === Number(profile.id)).length}</b><span>Услуг</span></div></div><div className="settings-list"><button onClick={() => sendToBot("my_listings")}><Icon name="orders" /><span>Мои объявления</span><Icon name="arrow" /></button><button onClick={() => setToast(favorites.length ? `В избранном: ${favorites.length}` : "В избранном пока ничего нет")}><Icon name="star" /><span>Избранное</span><Icon name="arrow" /></button><button onClick={() => sendToBot("support")}><Icon name="chat" /><span>Поддержка</span><Icon name="arrow" /></button></div>{isAdmin && <AdminPanel summary={adminSummary} />}</section>}
+    {tab === "profile" && <section><div className="profile-card"><span className="avatar large">{profile.name.slice(0, 1).toUpperCase()}</span><div><p className="eyebrow">Профиль LTeam</p><h1>{profile.name}</h1><span>{profile.username}</span><small className={`sync-status ${isSynced ? "online" : "offline"}`}>{isSynced ? "● Синхронизирован с ботом" : "○ Требуется синхронизация с ботом"}</small></div><button className="round-button" onClick={() => setSettingsOpen(true)}>⚙</button></div><div className="profile-stats"><div><b>{orderItems.length}</b><span>Заказов</span></div><div><b>{dealItems.length}</b><span>Сделок</span></div><div><b>{catalogListings.filter((item) => Number(item.seller_id) === Number(profile.id)).length}</b><span>Услуг</span></div></div><div className="settings-list"><button onClick={() => sendToBot("my_listings")}><Icon name="orders" /><span>Мои объявления</span><Icon name="arrow" /></button><button onClick={() => setToast(favorites.length ? `В избранном: ${favorites.length}` : "В избранном пока ничего нет")}><Icon name="star" /><span>Избранное</span><Icon name="arrow" /></button><button onClick={() => sendToBot("support")}><Icon name="chat" /><span>Поддержка</span><Icon name="arrow" /></button></div>{isAdmin && <AdminPanel summary={adminSummary} onOpen={() => setTab("admin")} />}</section>}
 
     {tab === "create" && <ListingComposer initial={listingForm} message={formMessage} onSubmit={async (form, reset) => { setFormMessage(""); try { await apiRequest("/api/listings", "POST", form); setFormMessage("Объявление отправлено на проверку."); const clean = { title: "", category: "Дизайн", price: "", delivery_time: "По договорённости", description: "", image_data: "" }; setListingForm(clean); reset(); } catch (error) { setFormMessage(error.message); } }} />}
 
@@ -367,6 +370,7 @@ export default function App() {
     {tab === "create-order" && <OrderComposer initial={{ title: "", category: "Разработка", budget: "", deadline: "По договорённости", description: "" }} onClose={() => setTab("orders")} message={formMessage} onSubmit={async (form, reset) => { setFormMessage(""); try { const result = await apiRequest("/api/orders", "POST", form); setOrderItems((items) => [{ ...form, id: result.order_id, status: "moderation" }, ...items]); setFormMessage("Заказ отправлен на модерацию. Администраторы получили уведомление."); reset(); } catch (error) { setFormMessage(error.message); } }} />}
     {tab === "orders" && <OrdersWorkspace orders={orderItems} deals={dealItems} profile={profile} fetchData={apiFetch} request={apiRequest} onNavigate={setTab} onChat={setChat} />}
     {tab === "my-listings" && <MyListingsWorkspace fetchData={apiFetch} onNavigate={setTab} />}
+    {isAdmin && tab === "admin" && <AdminWorkspace summary={adminSummary} onNavigate={setTab} onOpenBot={(section) => section === "admin_panel" ? sendToBot("admin_panel") : sendToBot("admin_open", { section })} />}
     <nav className="bottom-nav">{navItems.map(([id, icon, label]) => <button className={tab === id ? "active" : ""} key={id} onClick={() => setTab(id)}><Icon name={icon} /><span>{label}</span></button>)}</nav>
     {settingsOpen && <SettingsSheet theme={theme} setTheme={setTheme} onClose={() => setSettingsOpen(false)} />}
     {toast && <div className="toast"><span>✓</span>{toast}</div>}

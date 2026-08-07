@@ -1,12 +1,119 @@
 """?????? ? SQLite-????? LTeam Market."""
 
+import os
 import sqlite3
+import threading
 from pathlib import Path
 
 DB_PATH = str(Path(__file__).resolve().parent.parent / "market.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+_CLOUD_LOCK = threading.Lock()
+_CLOUD_READY = False
+
+
+def _cloud_connect():
+    """Optional durable backup for free Render instances without rewriting the SQLite bot."""
+    if not DATABASE_URL:
+        return None
+    try:
+        import psycopg
+        return psycopg.connect(DATABASE_URL, connect_timeout=5)
+    except Exception:
+        return None
+
+
+def _prepare_cloud(connection) -> None:
+    global _CLOUD_READY
+    if _CLOUD_READY:
+        return
+    with connection.cursor() as cursor:
+        cursor.execute("""CREATE TABLE IF NOT EXISTS lteam_sqlite_backup (
+            backup_key TEXT PRIMARY KEY, payload BYTEA NOT NULL, updated_at TIMESTAMPTZ DEFAULT NOW())""")
+    connection.commit()
+    _CLOUD_READY = True
+
+
+def _restore_cloud_snapshot() -> None:
+    """Restore only for a new container; never overwrite an existing local working database."""
+    path = Path(DB_PATH)
+    if not DATABASE_URL or (path.exists() and path.stat().st_size > 0):
+        return
+    with _CLOUD_LOCK:
+        cloud = _cloud_connect()
+        if not cloud:
+            return
+        try:
+            _prepare_cloud(cloud)
+            with cloud.cursor() as cursor:
+                cursor.execute("SELECT payload FROM lteam_sqlite_backup WHERE backup_key='market'")
+                row = cursor.fetchone()
+            if row and row[0]:
+                temporary = path.with_suffix(".restore")
+                temporary.write_bytes(bytes(row[0]))
+                temporary.replace(path)
+        except Exception:
+            pass
+        finally:
+            cloud.close()
+
+
+def _backup_cloud_snapshot() -> None:
+    path = Path(DB_PATH)
+    if not DATABASE_URL or not path.exists() or path.stat().st_size == 0:
+        return
+    with _CLOUD_LOCK:
+        cloud = _cloud_connect()
+        if not cloud:
+            return
+        try:
+            _prepare_cloud(cloud)
+            payload = path.read_bytes()
+            with cloud.cursor() as cursor:
+                cursor.execute("""INSERT INTO lteam_sqlite_backup (backup_key, payload, updated_at)
+                    VALUES ('market', %s, NOW())
+                    ON CONFLICT (backup_key) DO UPDATE SET payload=EXCLUDED.payload, updated_at=NOW()""", (payload,))
+            cloud.commit()
+        except Exception:
+            pass
+        finally:
+            cloud.close()
+
+
+class SyncedConnection:
+    """SQLite-compatible proxy that snapshots only after successful commits."""
+    def __init__(self, connection: sqlite3.Connection):
+        object.__setattr__(self, "_connection", connection)
+
+    def __getattr__(self, name):
+        return getattr(self._connection, name)
+
+    def __setattr__(self, name, value):
+        if name == "_connection":
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._connection, name, value)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        if exc_type:
+            self._connection.rollback()
+        else:
+            self.commit()
+        return False
+
+    def commit(self):
+        result = self._connection.commit()
+        _backup_cloud_snapshot()
+        return result
+
+    def close(self):
+        return self._connection.close()
 
 def db():
-    return sqlite3.connect(DB_PATH)
+    _restore_cloud_snapshot()
+    return SyncedConnection(sqlite3.connect(DB_PATH))
 
 
 def init_db():

@@ -768,8 +768,8 @@ def public_user_reviews(user_id: int):
     return jsonify([dict(row) for row in rows])
 
 
-@app.get("/api/tickets")
-def tickets_api():
+@app.get("/api/tickets/history")
+def tickets_history_api():
     """Return the current user's support history from the same table as the bot."""
     user_id = current_user_id()
     if not user_id:
@@ -783,7 +783,7 @@ def tickets_api():
     return jsonify([dict(row) for row in rows])
 
 
-@app.post("/api/tickets")
+@app.post("/api/tickets/new")
 def create_ticket_api():
     """Create a support request that admins can handle from the Telegram bot."""
     user_id = current_user_id()

@@ -26,6 +26,18 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+        # MiniApp reads public profile data before the bot starts polling.
+        # Keep these additions here instead of relying on a later bot handler.
+        for column_sql in [
+            "ALTER TABLE users ADD COLUMN display_name TEXT",
+            "ALTER TABLE users ADD COLUMN first_name TEXT",
+            "ALTER TABLE users ADD COLUMN last_name TEXT",
+        ]:
+            try:
+                cur.execute(column_sql)
+            except sqlite3.OperationalError:
+                pass
+
         cur.execute("""
         CREATE TABLE IF NOT EXISTS listings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -254,6 +266,61 @@ def init_db():
             receiver_id INTEGER,
             text TEXT,
             created_at TEXT
+        )
+        """)
+
+        # The API and the bot share these tables.  They must exist before the
+        # web server starts, not only after a finance or dispute action inside
+        # the bot has happened for the first time.
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_balances (
+            user_id INTEGER PRIMARY KEY,
+            available INTEGER DEFAULT 0,
+            frozen INTEGER DEFAULT 0,
+            total_earned INTEGER DEFAULT 0,
+            total_withdrawn INTEGER DEFAULT 0,
+            updated_at TEXT
+        )
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS balance_transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            deal_id INTEGER,
+            withdrawal_id INTEGER,
+            tx_type TEXT,
+            amount INTEGER,
+            balance_after INTEGER DEFAULT 0,
+            comment TEXT,
+            created_at TEXT
+        )
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS withdrawal_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            amount INTEGER,
+            requisites TEXT,
+            status TEXT DEFAULT 'pending',
+            admin_id INTEGER,
+            admin_comment TEXT,
+            created_at TEXT,
+            resolved_at TEXT
+        )
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS deal_disputes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            deal_id INTEGER NOT NULL,
+            opened_by INTEGER NOT NULL,
+            buyer_id INTEGER,
+            seller_id INTEGER,
+            reason TEXT,
+            status TEXT DEFAULT 'open',
+            resolved_by INTEGER,
+            resolution TEXT,
+            created_at TEXT,
+            resolved_at TEXT
         )
         """)
 

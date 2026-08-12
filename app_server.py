@@ -6,6 +6,7 @@ import threading
 import time
 
 from cloud_state import restore_sqlite, snapshot_sqlite
+from app.database import init_db
 
 
 def run_api(app) -> None:
@@ -18,6 +19,11 @@ if __name__ == "__main__":
         print("Cloud database restored" if restored else "Cloud database is empty")
     except Exception as error:
         print(f"Cloud restore skipped: {error}")
+
+    # Start the shared schema before accepting the first MiniApp request.
+    # The bot also runs this migration, but its polling startup is concurrent
+    # with Flask and must not be a prerequisite for API availability.
+    init_db()
 
     from webapp_server import app
     from main import main as bot_main

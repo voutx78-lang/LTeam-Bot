@@ -89,6 +89,16 @@
 :root[data-theme="light"] .profile-workspace { background: radial-gradient(75% 32% at 50% 0, rgba(120,92,235,.16), transparent 72%), var(--page); }
 :root[data-theme="light"] .settings-workspace { background: radial-gradient(75% 32% at 50% 0, rgba(120,92,235,.14), transparent 72%), var(--page); }
 
+/* Overrides for the legacy mobile alignment layer, which used !important dark values. */
+:root[data-theme="light"] .marketplace-shell .market-topbar { background: color-mix(in srgb, var(--surface) 94%, transparent) !important; border-color: var(--line) !important; }
+:root[data-theme="light"] .marketplace-shell .market-brand i { background-color: var(--surface) !important; }
+:root[data-theme="light"] .marketplace-shell .market-brand,:root[data-theme="light"] .marketplace-shell .market-brand b { color: var(--ink) !important; }
+:root[data-theme="light"] .marketplace-shell .market-card { background: var(--surface) !important; border-color: var(--line) !important; }
+:root[data-theme="light"] .marketplace-shell .service-cover { background: linear-gradient(135deg,#e8e4ff,#ded7ff 54%,#eef0fb) !important; color: #3e2d90 !important; }
+:root[data-theme="light"] .marketplace-shell .service-cover:before { background: radial-gradient(circle,rgba(119,91,235,.22),transparent 63%) !important; }
+:root[data-theme="light"] .marketplace-shell .service-cover span { background: linear-gradient(140deg,#5a42cd,#9b7cff) !important; background-clip:text !important; }
+:root[data-theme="light"] .marketplace-shell .market-dock { background: color-mix(in srgb, var(--surface) 94%, transparent) !important; border-color: var(--line) !important; }
+
 /* The deal chat is a real workspace too, not a separate dark-only screen. */
 .chat-sheet { background: color-mix(in srgb, var(--ink) 18%, transparent); }
 .chat-card { background: radial-gradient(80% 33% at 50% 0, color-mix(in srgb, var(--accent) 15%, transparent), transparent 72%), var(--page) !important; color: var(--ink) !important; }

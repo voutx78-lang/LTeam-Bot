@@ -854,7 +854,8 @@ def admin_summary():
         disputes = connection.execute("SELECT COUNT(*) FROM deals WHERE status='dispute_open'").fetchone()[0]
         payouts = connection.execute("SELECT COUNT(*) FROM withdrawal_requests WHERE status='pending'").fetchone()[0]
         moderation = connection.execute("SELECT (SELECT COUNT(*) FROM listings WHERE status IN ('pending','moderation')) + (SELECT COUNT(*) FROM orders WHERE status='moderation')").fetchone()[0]
-    return jsonify({"payments": payments, "disputes": disputes, "payouts": payouts, "moderation": moderation})
+        tickets = connection.execute("SELECT COUNT(*) FROM tickets WHERE status IN ('open', 'answered')").fetchone()[0]
+    return jsonify({"payments": payments, "disputes": disputes, "payouts": payouts, "moderation": moderation, "tickets": tickets})
 
 
 @app.get("/api/admin/moderation")
@@ -876,7 +877,7 @@ def admin_operation_queue(queue_name: str):
     """Compact operational queues for the private MiniApp admin workspace."""
     if int(get_user().get("id", 0)) not in STAFF_ADMIN_IDS:
         return jsonify({"error": "forbidden"}), 403
-    if queue_name not in {"payments", "payouts", "disputes"}:
+    if queue_name not in {"payments", "payouts", "disputes", "tickets"}:
         return jsonify({"error": "not_found"}), 404
     with db() as connection:
         if queue_name == "payments":
@@ -889,6 +890,10 @@ def admin_operation_queue(queue_name: str):
             rows = connection.execute("""SELECT id, 'Вывод средств' AS title, amount, status, user_id,
                 COALESCE(requisites, '') AS note, created_at FROM withdrawal_requests
                 WHERE status='pending' ORDER BY id ASC LIMIT 50""").fetchall()
+        elif queue_name == "tickets":
+            rows = connection.execute("""SELECT id, 'Support request' AS title, 0 AS amount,
+                status, user_id, text AS note, created_at FROM tickets
+                WHERE status IN ('open', 'answered') ORDER BY id ASC LIMIT 50""").fetchall()
         else:
             rows = connection.execute("""SELECT dd.id, COALESCE(o.title, l.title, 'Спор по сделке') AS title,
                 d.amount, d.status, dd.opened_by AS user_id, dd.reason AS note, dd.created_at, dd.deal_id

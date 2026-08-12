@@ -391,11 +391,11 @@ export default function App() {
 
     {tab === "create" && <ListingComposer initial={listingForm} message={formMessage} onSubmit={async (form, reset) => { setFormMessage(""); try { await apiRequest("/api/listings", "POST", form); setFormMessage("Объявление отправлено на проверку."); const clean = { title: "", category: "Дизайн", price: "", delivery_time: "По договорённости", description: "", image_data: "" }; setListingForm(clean); reset(); } catch (error) { setFormMessage(error.message); } }} />}
 
-    {tab === "catalog" && <CatalogV3 items={catalogListings} orders={orderItems} favorites={favorites} onFavorite={toggleFavorite} onNavigate={setTab} onStartServiceRequest={(listing_id) => sendToBot("ask_seller", { listing_id })} request={apiRequest} fetchData={apiFetch} />}
+    {tab === "catalog" && <CatalogV3 items={catalogListings} orders={orderItems} favorites={favorites} onFavorite={toggleFavorite} onNavigate={setTab} request={apiRequest} fetchData={apiFetch} />}
     {tab === "create-order" && <OrderReferenceWidget />}
     {tab === "create-order" && <OrderComposer initial={{ title: "", category: "Разработка", budget: "", deadline: "По договорённости", description: "" }} onClose={() => setTab("orders")} message={formMessage} onSubmit={async (form, reset) => { setFormMessage(""); try { const result = await apiRequest("/api/orders", "POST", form); setOrderItems((items) => [{ ...form, id: result.order_id, status: "moderation" }, ...items]); setFormMessage("Заказ отправлен на модерацию. Администраторы получили уведомление."); reset(); } catch (error) { setFormMessage(error.message); } }} />}
     {tab === "orders" && <OrdersWorkspace orders={orderItems} deals={dealItems} profile={profile} fetchData={apiFetch} request={apiRequest} onNavigate={setTab} onChat={setChat} onDealsChanged={setDealItems} />}
-    {tab === "my-listings" && <MyListingsWorkspace fetchData={apiFetch} onNavigate={setTab} />}
+    {tab === "my-listings" && <MyListingsWorkspace fetchData={apiFetch} request={apiRequest} onNavigate={setTab} onOpenDeal={(dealId) => { setTab("orders"); setToast(`Сделка #${dealId} создана. Откройте её в разделе «Сделки».`); }} />}
     {isAdmin && tab === "admin" && <AdminWorkspace summary={adminSummary} fetchData={apiFetch} request={apiRequest} onNavigate={setTab} onOpenBot={(section) => section === "admin_panel" ? sendToBot("admin_panel") : sendToBot("admin_open", { section })} />}
     {tab === "wallet" && <WalletWorkspace balance={balance} fetchData={apiFetch} onNavigate={setTab} onWithdraw={() => sendToBot("withdraw_start")} />}
     {tab === "favorites" && <FavoritesWorkspace items={catalogListings} favorites={favorites} onToggle={toggleFavorite} onNavigate={setTab} />}

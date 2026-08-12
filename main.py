@@ -45,6 +45,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 OWNER_IDS = [int(x.strip()) for x in os.getenv("OWNER_IDS", "").split(",") if x.strip()] or (ADMIN_IDS[:1] if ADMIN_IDS else [])
 MODERATOR_IDS = [int(x.strip()) for x in os.getenv("MODERATOR_IDS", "").split(",") if x.strip()]
+STAFF_IDS = sorted(set(ADMIN_IDS) | set(OWNER_IDS) | set(MODERATOR_IDS))
 STAFF_ROLE_LEVELS = {"user": 0, "moderator": 1, "admin": 2, "owner": 3}
 
 bot = Bot(token=BOT_TOKEN)
@@ -254,7 +255,7 @@ def order_chat_moderation(text: str, order_budget: int | None = None) -> tuple[b
 
 
 async def notify_admins(text: str, reply_markup=None):
-    for admin in ADMIN_IDS:
+    for admin in STAFF_IDS:
         try:
             await bot.send_message(admin, text, reply_markup=reply_markup, parse_mode="HTML")
         except Exception:

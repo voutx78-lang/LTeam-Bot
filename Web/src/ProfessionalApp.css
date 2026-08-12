@@ -33,3 +33,59 @@
 .pro-notice { position: fixed; z-index: 100; bottom: 85px; left: 14px; right: 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 15px; border: 1px solid #8be3cf55; border-radius: 14px; color: #eafffb; background: #15332edb; box-shadow: 0 16px 45px #0009; text-align: left; font-size: 12px; line-height: 1.4; }.pro-notice i { font-size: 20px; font-style: normal; }
 html[data-theme="light"] .product-app { color: #17182a; background: #f5f6fb; } html[data-theme="light"] .pro-topbar, html[data-theme="light"] .pro-brand { color: #151629; } html[data-theme="light"] .pro-hero { border-color: #e1ddfa; background: radial-gradient(circle at 96% 2%, #9f85ff40, transparent 35%), #e9eaff; box-shadow: none; } html[data-theme="light"] .pro-hero h1, html[data-theme="light"] .pro-section-head h2, html[data-theme="light"] .pro-activity h2 { color: #151629; } html[data-theme="light"] .pro-hero > p { color: #656b86; } html[data-theme="light"] .pro-feature-grid button, html[data-theme="light"] .pro-guide-steps article, html[data-theme="light"] .pro-activity { border-color: #e4e6ee; color: #191a2c; background: #fff; } html[data-theme="light"] .pro-feature-grid span, html[data-theme="light"] .pro-guide-steps p, html[data-theme="light"] .pro-activity small { color: #767d95; } html[data-theme="light"] .pro-nav { border-color: #e6e7ed; background: #fffffff0; } html[data-theme="light"] .pro-guide h1 { color: #17182a; }
 @media (max-width: 500px) { .pro-feature-grid { grid-template-columns: 1fr; }.pro-feature-grid button { min-height: 78px; display: grid; grid-template-columns: 34px 1fr; column-gap: 10px; align-items: center; }.pro-feature-grid i { grid-row: span 2; }.pro-feature-grid b { margin: 0; }.pro-feature-grid span { margin: 0; }.pro-activity { flex-wrap: wrap; }.pro-activity > :first-child { min-width: 100%; }.pro-activity button { margin-left: auto; }.pro-hero { padding: 28px 19px 20px; } }
+
+/* Product-wide shell: the inherited feature screens now share the same hierarchy. */
+.product-app .market-dock, .product-app .cv-dock { display: none !important; }
+.product-app .catalog-v3, .product-app .orders-workspace, .product-app .profile-workspace, .product-app .wallet-workspace, .product-app .support-workspace, .product-app .admin-workspace, .product-app .my-listings-workspace, .product-app .favorites-workspace { min-height: 100vh; padding-bottom: 94px; background: #0a0c16; }
+.product-app .catalog-v3 { position: relative; inset: auto; z-index: auto; max-width: 820px; margin: 0 auto; padding: 18px 18px 94px; }
+.product-app .market-topbar { max-width: 820px; margin: 0 auto 26px; padding: 0; }
+.product-app .market-topbar > button:first-child, .product-app .market-topbar b { color: #f5f6ff; }
+.product-app .market-topbar > button:last-child { min-height: 36px; border: 1px solid #8a72ff66; border-radius: 11px; background: #7b5dff18; color: #bcaeff; font-weight: 800; }
+.product-app .market-content { max-width: 820px; margin: 0 auto; }
+.product-app .market-heading { margin-bottom: 22px; }
+.product-app .market-heading h1 { margin: 7px 0 5px; color: #f7f7ff; font-size: clamp(28px, 7vw, 37px); line-height: 1.05; letter-spacing: -1.2px; }
+.product-app .market-heading p, .product-app .market-heading span { color: #a89bff; font-weight: 850; letter-spacing: .8px; }
+.product-app .market-segment { padding: 5px; border: 1px solid #ffffff0d; border-radius: 16px; background: #151827; }
+.product-app .market-segment button { min-height: 44px; border-radius: 12px; color: #a8afc6; font-weight: 800; }
+.product-app .market-segment button.active { color: #fff; background: linear-gradient(135deg, #805fff, #6947df); box-shadow: 0 8px 18px #593bd139; }
+.product-app .market-search { min-height: 51px; margin: 16px 0 12px; border: 1px solid #ffffff15; border-radius: 15px; background: #111421; box-shadow: none; }
+.product-app .market-search input { color: #f2f4ff; font-size: 14px; }
+.product-app .market-search input::placeholder { color: #747c9e; }
+.product-app .market-toolbar { gap: 8px; align-items: center; }
+.product-app .market-picker-button { min-height: 39px; border: 1px solid #ffffff16; border-radius: 11px; background: #151827; color: #dce0f7; font-size: 12px; font-weight: 750; }
+.product-app .market-picker-menu { border: 1px solid #ffffff18; border-radius: 12px; background: #191d30; box-shadow: 0 18px 44px #000a; }
+.product-app .market-picker-menu button { color: #dfe3f6; }
+.product-app .market-picker-menu button.active { color: #fff; background: #7658ed; }
+.product-app .market-found { color: #929bb9; font-size: 11px; font-weight: 700; }
+.product-app .market-grid { gap: 12px; }
+.product-app .market-card { overflow: hidden; border: 1px solid #ffffff13; border-radius: 19px; background: linear-gradient(145deg, #171b2e, #111521); box-shadow: 0 12px 30px #03040d34; }
+.product-app .service-cover, .product-app .order-reference-image { min-height: 138px; background: radial-gradient(circle at 75% 0, #8c70ff5c, transparent 38%), #1b1d36; }
+.product-app .service-card-body { padding: 15px; }
+.product-app .seller-line { gap: 10px; }
+.product-app .market-avatar { width: 35px; height: 35px; color: #24203d; background: linear-gradient(135deg, #e9e1ff, #aa90ff); }
+.product-app .seller-line b { color: #f5f6ff; font-size: 13px; }
+.product-app .seller-line small { color: #8f98b7; }
+.product-app .service-card-title, .product-app .order-card-title { color: #f4f5ff; font-size: 18px; line-height: 1.18; letter-spacing: -.4px; }
+.product-app .market-rating { font-size: 11px; font-weight: 800; }
+.product-app .market-badges span, .product-app .order-tags span { border: 1px solid #ffffff0c; border-radius: 8px; background: #0d1020; color: #b9adff; font-size: 10px; font-weight: 750; }
+.product-app .market-card footer { border-color: #ffffff0f; }
+.product-app .market-card footer b { color: #f8f8ff; font-size: 16px; }
+.product-app .market-card footer button, .product-app .detail-primary, .product-app .order-apply { min-height: 39px; border: 0; border-radius: 10px; color: #171426; background: #9c83ff; font-size: 11px; font-weight: 900; }
+.product-app .order-card-top { color: #aeb7d5; }
+.product-app .order-description { color: #9da6c0; line-height: 1.45; }
+.product-app .market-detail-sheet { max-width: 720px; margin: auto; border: 1px solid #ffffff18; border-radius: 24px 24px 0 0; background: #121624; color: #f5f6ff; }
+.product-app .market-modal-backdrop { background: #02030a9c; backdrop-filter: blur(7px); }
+.product-app .detail-description, .product-app .detail-facts span { color: #aeb6ce; }
+.product-app .detail-facts div { border-radius: 12px; background: #1b2033; }
+.product-app .orders-content { max-width: 820px; padding: 23px 18px 98px; }
+.product-app .orders-intro h1 { color: #f6f6ff; }
+.product-app .orders-summary div, .product-app .work-row { border-color: #ffffff13; background: linear-gradient(145deg, #171b2d, #111521); }
+.product-app .orders-tabs button { border-color: #ffffff14; background: #151827; color: #aab2cc; }
+.product-app .orders-tabs button.active { border-color: #8066ff; background: #795cf128; color: #f4f2ff; }
+.product-app .work-row h3 { color: #f5f6ff; }
+.product-app .work-primary { background: linear-gradient(135deg, #8b6bff, #6a4ee3); }
+.product-app .work-row footer { border-color: #ffffff10; }
+html[data-theme="light"] .product-app .catalog-v3, html[data-theme="light"] .product-app .orders-workspace, html[data-theme="light"] .product-app .profile-workspace, html[data-theme="light"] .product-app .wallet-workspace, html[data-theme="light"] .product-app .support-workspace, html[data-theme="light"] .product-app .admin-workspace, html[data-theme="light"] .product-app .my-listings-workspace, html[data-theme="light"] .product-app .favorites-workspace { background: #f5f6fb; }
+html[data-theme="light"] .product-app .market-topbar > button:first-child, html[data-theme="light"] .product-app .market-topbar b, html[data-theme="light"] .product-app .market-heading h1, html[data-theme="light"] .product-app .service-card-title, html[data-theme="light"] .product-app .order-card-title, html[data-theme="light"] .product-app .seller-line b, html[data-theme="light"] .product-app .work-row h3 { color: #17182a; }
+html[data-theme="light"] .product-app .market-segment, html[data-theme="light"] .product-app .market-picker-button, html[data-theme="light"] .product-app .market-card, html[data-theme="light"] .product-app .orders-summary div, html[data-theme="light"] .product-app .work-row { border-color: #e1e4ed; background: #fff; }
+html[data-theme="light"] .product-app .market-search { border-color: #e0e3ed; background: #fff; } html[data-theme="light"] .product-app .market-search input { color: #17182a; }

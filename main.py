@@ -13522,8 +13522,8 @@ async def admin_unmute_user(call: CallbackQuery):
     await admin_user_profile(call)
 
 
-@dp.callback_query(F.data.startswith("admin_user_warnings:"))
-async def admin_user_warnings(call: CallbackQuery):
+@dp.callback_query(F.data.startswith("admin_user_warnings_v5:"))
+async def admin_user_warnings_v5_legacy(call: CallbackQuery):
     if not is_staff(call.from_user.id):
         await call.answer("Нет доступа", show_alert=True)
         return

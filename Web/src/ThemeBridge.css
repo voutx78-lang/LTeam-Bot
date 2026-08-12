@@ -261,3 +261,69 @@
   color: #221952 !important;
   border-color: #cfc1ff !important;
 }
+
+/* Legacy pages are still mounted for backwards-compatible callbacks, but
+   never form part of the visible product UI.  The current workspaces below
+   are the single source of truth for each tab. */
+.app-shell:has(.catalog-v3) > section:not(.catalog-v3),
+.app-shell:has(.orders-workspace) > section:not(.orders-workspace),
+.app-shell:has(.order-composer) > section:not(.order-composer) {
+  display: none !important;
+}
+.legacy-home { display: none !important; }
+
+/* Old dark-only files can target the app shell and form screens directly.
+   This higher-specificity final layer prevents any colour leak in light UI. */
+:root[data-theme="light"] .app-shell:has(.listing-composer),
+:root[data-theme="light"] .app-shell:has(.order-composer),
+:root[data-theme="light"] .app-shell:has(.catalog-v3),
+:root[data-theme="light"] .app-shell:has(.orders-workspace) {
+  background: var(--page) !important;
+  color: var(--ink) !important;
+}
+:root[data-theme="light"] .catalog-v3,
+:root[data-theme="light"] .order-composer,
+:root[data-theme="light"] .listing-composer {
+  background: radial-gradient(90% 38% at 50% 0, rgba(111, 86, 232, .14), transparent 68%), var(--page) !important;
+  color: var(--ink) !important;
+}
+:root[data-theme="light"] .catalog-v3 *,
+:root[data-theme="light"] .order-composer *,
+:root[data-theme="light"] .listing-composer * {
+  border-color: var(--line);
+}
+:root[data-theme="light"] .catalog-v3 h1,
+:root[data-theme="light"] .catalog-v3 h2,
+:root[data-theme="light"] .catalog-v3 h3,
+:root[data-theme="light"] .order-composer h1,
+:root[data-theme="light"] .listing-composer h1,
+:root[data-theme="light"] .order-composer b,
+:root[data-theme="light"] .listing-composer b {
+  color: var(--ink) !important;
+}
+:root[data-theme="light"] .catalog-v3 input,
+:root[data-theme="light"] .catalog-v3 select,
+:root[data-theme="light"] .order-composer input,
+:root[data-theme="light"] .order-composer select,
+:root[data-theme="light"] .order-composer textarea,
+:root[data-theme="light"] .listing-composer input,
+:root[data-theme="light"] .listing-composer select,
+:root[data-theme="light"] .listing-composer textarea,
+:root[data-theme="light"] .service-v3,
+:root[data-theme="light"] .order-v3,
+:root[data-theme="light"] .reference-block,
+:root[data-theme="light"] .composer-intro,
+:root[data-theme="light"] .listing-cover-upload,
+:root[data-theme="light"] .portfolio-upload {
+  background: var(--surface) !important;
+  color: var(--ink) !important;
+  border-color: var(--line) !important;
+}
+:root[data-theme="light"] .catalog-v3 small,
+:root[data-theme="light"] .catalog-v3 p,
+:root[data-theme="light"] .order-composer small,
+:root[data-theme="light"] .listing-composer small,
+:root[data-theme="light"] .order-composer label,
+:root[data-theme="light"] .listing-composer label {
+  color: var(--muted) !important;
+}

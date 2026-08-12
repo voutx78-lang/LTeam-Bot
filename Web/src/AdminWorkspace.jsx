@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const queues = [
   ["moderation", "Модерация", "Новые услуги и заказы", "П"],
@@ -23,8 +23,10 @@ export default function AdminWorkspace({ summary = {}, onNavigate, onOpenBot, fe
   const [mode, setMode] = useState("moderation");
   const [opened, setOpened] = useState(false);
   const [notice, setNotice] = useState("");
+  const [liveCounts, setLiveCounts] = useState({});
 
-  const counts = { moderation: summary.moderation ?? 0, payments: summary.payments ?? 0, payouts: summary.payouts ?? 0, disputes: summary.disputes ?? 0 };
+  useEffect(() => setLiveCounts(summary), [summary]);
+  const counts = { moderation: liveCounts.moderation ?? 0, payments: liveCounts.payments ?? 0, payouts: liveCounts.payouts ?? 0, disputes: liveCounts.disputes ?? 0 };
   const total = Object.values(counts).reduce((sum, value) => sum + Number(value || 0), 0);
 
   async function openQueue(nextMode) {
@@ -43,6 +45,7 @@ export default function AdminWorkspace({ summary = {}, onNavigate, onOpenBot, fe
     try {
       await request(`/api/admin/moderation/${item.item_type}/${item.id}`, "POST", { action, note });
       setQueue((current) => current.filter((row) => row.id !== item.id || row.item_type !== item.item_type));
+      setLiveCounts((current) => ({ ...current, moderation: Math.max(0, Number(current.moderation || 0) - 1) }));
       setNotice(action === "approve" ? "Публикация одобрена — автор уже получил уведомление." : "Публикация отклонена, комментарий отправлен автору.");
     } catch (error) {
       setNotice(error?.message || "Не удалось обработать публикацию.");

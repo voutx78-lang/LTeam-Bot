@@ -772,6 +772,7 @@ def admin_moderation_decision(item_type: str, item_id: int):
         return jsonify({"error": "forbidden"}), 403
     payload = request.get_json(silent=True) or {}
     action = str(payload.get("action", "")).lower()
+    note = str(payload.get("note", "")).strip()[:500]
     if item_type not in {"listing", "order"} or action not in {"approve", "reject"}:
         return jsonify({"error": "validation", "message": "Неверное действие модерации."}), 400
     table, owner_column, success_status = ("listings", "seller_id", "active") if item_type == "listing" else ("orders", "customer_id", "active")
@@ -785,7 +786,8 @@ def admin_moderation_decision(item_type: str, item_id: int):
     if BOT_TOKEN:
         try:
             outcome = "одобрена и опубликована" if action == "approve" else "отклонена модератором"
-            body = urlencode({"chat_id": row["owner_id"], "text": f"Ваша публикация «{row['title']}» {outcome}."}).encode()
+            comment = f"\n\nКомментарий администратора: {note}" if action == "reject" and note else ""
+            body = urlencode({"chat_id": row["owner_id"], "text": f"Ваша публикация «{row['title']}» {outcome}.{comment}"}).encode()
             urlopen(Request(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data=body), timeout=4).read()
         except Exception:
             pass

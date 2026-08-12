@@ -5,6 +5,7 @@ const queues = [
   ["payments", "Оплаты", "Чеки и поступления", "₽"],
   ["payouts", "Выплаты", "Заявки исполнителей", "↑"],
   ["disputes", "Споры", "Проблемные сделки", "!"],
+  ["tickets", "Поддержка", "Новые обращения пользователей", "?"],
 ];
 
 const labels = {
@@ -12,6 +13,7 @@ const labels = {
   payments: ["ОПЛАТЫ", "Сделки на проверке"],
   payouts: ["ВЫВОДЫ", "Заявки на выплату"],
   disputes: ["СПОРЫ", "Открытые обращения"],
+  tickets: ["ПОДДЕРЖКА", "Обращения пользователей"],
 };
 
 function money(value) {
@@ -26,7 +28,7 @@ export default function AdminWorkspace({ summary = {}, onNavigate, onOpenBot, fe
   const [liveCounts, setLiveCounts] = useState({});
 
   useEffect(() => setLiveCounts(summary), [summary]);
-  const counts = { moderation: liveCounts.moderation ?? 0, payments: liveCounts.payments ?? 0, payouts: liveCounts.payouts ?? 0, disputes: liveCounts.disputes ?? 0 };
+  const counts = { moderation: liveCounts.moderation ?? 0, payments: liveCounts.payments ?? 0, payouts: liveCounts.payouts ?? 0, disputes: liveCounts.disputes ?? 0, tickets: liveCounts.tickets ?? 0 };
   const total = Object.values(counts).reduce((sum, value) => sum + Number(value || 0), 0);
 
   async function openQueue(nextMode) {

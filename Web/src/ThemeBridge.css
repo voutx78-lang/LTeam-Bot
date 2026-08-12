@@ -270,6 +270,9 @@
 .app-shell:has(.order-composer) > section:not(.order-composer) {
   display: none !important;
 }
+.app-shell:has(.order-composer) > .order-reference-widget {
+  display: none !important;
+}
 .legacy-home { display: none !important; }
 
 /* Old dark-only files can target the app shell and form screens directly.

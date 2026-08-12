@@ -13813,6 +13813,211 @@ async def admin_bulk_warn_v5(call: CallbackQuery):
 
 import asyncio
 
+
+# ---------------------------------------------------------------------------
+# LTeam bot experience layer
+# ---------------------------------------------------------------------------
+# The marketplace logic above has been in production for a while.  Keep it
+# intact, but expose it through a compact navigation shell so a user does not
+# have to remember callback-heavy legacy screens to get to the right flow.
+
+BOT_NAV_MARKET = "🏪 Маркет"
+BOT_NAV_ORDERS = "📌 Заказы"
+BOT_NAV_PLACE = "➕ Разместить"
+BOT_NAV_PROFILE = "👤 Кабинет"
+BOT_NAV_GUARANTEE = "🛡 Гарант"
+BOT_NAV_MENU = "☰ Меню"
+BOT_NAV_ADMIN = "🛠 Управление"
+
+
+def home_market_keyboard() -> InlineKeyboardMarkup | None:
+    """The MiniApp entry point shown below every fresh welcome screen."""
+    if not WEBAPP_URL.startswith("https://"):
+        return None
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(
+            text="Открыть LTeam Market",
+            web_app=WebAppInfo(url=WEBAPP_URL),
+        )
+    ]])
+
+
+def lteam_reply_menu(user_id: int | None = None) -> ReplyKeyboardMarkup:
+    rows = [
+        [KeyboardButton(text=BOT_NAV_MARKET), KeyboardButton(text=BOT_NAV_ORDERS)],
+        [KeyboardButton(text=BOT_NAV_PLACE), KeyboardButton(text=BOT_NAV_PROFILE)],
+        [KeyboardButton(text=BOT_NAV_GUARANTEE), KeyboardButton(text=BOT_NAV_MENU)],
+    ]
+    if user_id and is_staff(user_id):
+        rows.append([KeyboardButton(text=BOT_NAV_ADMIN)])
+    return ReplyKeyboardMarkup(
+        keyboard=rows,
+        resize_keyboard=True,
+        input_field_placeholder="Выберите раздел LTeam Market",
+    )
+
+
+def main_menu(user_id: int | None = None) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if WEBAPP_URL.startswith("https://"):
+        rows.append([InlineKeyboardButton(
+            text="Открыть LTeam Market",
+            web_app=WebAppInfo(url=WEBAPP_URL),
+        )])
+    rows.extend([
+        [InlineKeyboardButton(text="🏪 Смотреть каталог", callback_data="market"),
+         InlineKeyboardButton(text="📌 Найти заказ", callback_data="orders_list")],
+        [InlineKeyboardButton(text="➕ Разместить услугу", callback_data="create_listing"),
+         InlineKeyboardButton(text="🧾 Создать заказ", callback_data="create_order")],
+        [InlineKeyboardButton(text="👤 Мой кабинет", callback_data="profile"),
+         InlineKeyboardButton(text="💬 Поддержка", callback_data="support")],
+        [InlineKeyboardButton(text="🛡 Как работает гарант", callback_data="rules")],
+    ])
+    if user_id and is_staff(user_id):
+        rows.append([InlineKeyboardButton(text="🛠 Центр управления", callback_data="admin_panel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def send_home(message: Message):
+    """Clean welcome screen used by /start and the new reply navigation."""
+    await clear_nav_menu_message(message.from_user.id)
+    name = html.escape(message.from_user.full_name or "пользователь")
+    text = (
+        f"<b>Добро пожаловать в LTeam Market, {name}!</b>\n\n"
+        "Безопасный маркетплейс услуг и цифровых товаров. "
+        "Общайтесь внутри сделки, а оплату проводит гарант LTeam.\n\n"
+        "<b>С чего начать:</b>\n"
+        "• откройте Market и найдите исполнителя;\n"
+        "• создайте заказ, чтобы получить отклики;\n"
+        "• разместите услугу и получите новых клиентов."
+    )
+    try:
+        if os.path.exists(BANNER_PATH):
+            await message.answer_photo(
+                FSInputFile(BANNER_PATH), caption=text,
+                reply_markup=home_market_keyboard(), parse_mode="HTML",
+            )
+        else:
+            await message.answer(text, reply_markup=home_market_keyboard(), parse_mode="HTML")
+    except Exception:
+        await message.answer(text, reply_markup=home_market_keyboard(), parse_mode="HTML")
+    await set_reply_menu_hint_for_message(
+        message, lteam_reply_menu(message.from_user.id),
+        text="Основные разделы всегда доступны в меню под полем ввода.",
+    )
+
+
+async def send_user_dashboard(message: Message):
+    user_id = message.from_user.id
+    with db() as conn:
+        listing_count = conn.execute(
+            "SELECT COUNT(*) FROM listings WHERE seller_id=? AND status='active'", (user_id,)
+        ).fetchone()[0]
+        # `orders` predates deals and names the customer column `customer_id`.
+        # Keep this explicit rather than relying on a MiniApp-only alias.
+        order_count = conn.execute(
+            "SELECT COUNT(*) FROM orders WHERE customer_id=? AND status NOT IN ('deleted', 'cancelled')", (user_id,)
+        ).fetchone()[0]
+        deal_count = conn.execute(
+            "SELECT COUNT(*) FROM deals WHERE (buyer_id=? OR seller_id=?) AND status NOT IN ('completed','cancelled','deleted')",
+            (user_id, user_id),
+        ).fetchone()[0]
+        # Earlier local databases did not have a balance column.  Finance
+        # tables are canonical for a live instance, but the dashboard must
+        # still work safely before the first balance migration.
+        user_columns = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
+        balance_row = conn.execute(
+            "SELECT COALESCE(balance, 0) FROM users WHERE user_id=?", (user_id,)
+        ).fetchone() if "balance" in user_columns else None
+    balance = int(balance_row[0] or 0) if balance_row else 0
+    text = (
+        "<b>Ваш кабинет LTeam</b>\n\n"
+        f"Активные услуги: <b>{listing_count}</b>\n"
+        f"Заказы: <b>{order_count}</b>\n"
+        f"Активные сделки: <b>{deal_count}</b>\n"
+        f"Баланс: <b>{balance:,} ₽</b>".replace(",", " ")
+    )
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Мои объявления", callback_data="my_listings"),
+         InlineKeyboardButton(text="Мои сделки", callback_data="my_deals")],
+        [InlineKeyboardButton(text="Открыть MiniApp", web_app=WebAppInfo(url=WEBAPP_URL))]
+        if WEBAPP_URL.startswith("https://") else [],
+    ]), parse_mode="HTML")
+
+
+@dp.message(Command("status"))
+async def command_status(message: Message):
+    save_user(message)
+    await send_user_dashboard(message)
+
+
+@dp.message(F.text == BOT_NAV_MARKET)
+async def nav_market(message: Message, state: FSMContext):
+    await state.clear()
+    save_user(message)
+    await show_market_from_message(message)
+
+
+@dp.message(F.text == BOT_NAV_ORDERS)
+async def nav_orders(message: Message, state: FSMContext):
+    await state.clear()
+    save_user(message)
+    await show_orders_from_message(message)
+
+
+@dp.message(F.text == BOT_NAV_PLACE)
+async def nav_place(message: Message, state: FSMContext):
+    await state.clear()
+    save_user(message)
+    await show_place_from_message(message)
+
+
+@dp.message(F.text == BOT_NAV_PROFILE)
+async def nav_profile(message: Message, state: FSMContext):
+    await state.clear()
+    save_user(message)
+    await send_user_dashboard(message)
+
+
+@dp.message(F.text == BOT_NAV_GUARANTEE)
+async def nav_guarantee(message: Message, state: FSMContext):
+    await state.clear()
+    save_user(message)
+    await show_guarantee_from_message(message)
+
+
+@dp.message(F.text == BOT_NAV_MENU)
+async def nav_menu(message: Message, state: FSMContext):
+    await state.clear()
+    save_user(message)
+    await message.answer("<b>Навигация LTeam Market</b>\nВыберите действие:", reply_markup=main_menu(message.from_user.id), parse_mode="HTML")
+
+
+@dp.message(F.text == BOT_NAV_ADMIN)
+async def nav_admin(message: Message, state: FSMContext):
+    await state.clear()
+    save_user(message)
+    if not is_staff(message.from_user.id):
+        await message.answer("Этот раздел доступен только администрации.")
+        return
+    await message.answer(
+        "<b>Центр управления LTeam</b>\nОткройте очередь модерации, финансы, споры или поддержку.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="Открыть админ-панель", callback_data="admin_panel")
+        ]]), parse_mode="HTML",
+    )
+
+
+async def setup_bot_commands():
+    await bot.set_my_commands([
+        BotCommand(command="start", description="Открыть LTeam Market"),
+        BotCommand(command="menu", description="Открыть основное меню"),
+        BotCommand(command="status", description="Мой кабинет и сделки"),
+        BotCommand(command="help", description="Помощь по сервису"),
+        BotCommand(command="rules", description="Правила гаранта"),
+        BotCommand(command="cancel", description="Отменить текущее действие"),
+    ])
+
 async def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN не найден. Проверь .env файл")

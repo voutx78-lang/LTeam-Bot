@@ -72,7 +72,8 @@ CRYPTO_WALLET = os.getenv("CRYPTO_WALLET", "Не указан")
 WEBAPP_URL = os.getenv("WEBAPP_URL", "").strip()
 # The original static-site address is stale; the Web Service below serves the same
 # signed MiniApp together with its live marketplace API and cloud-backed storage.
-if WEBAPP_URL.rstrip("/") == "https://lteam-bot.onrender.com":
+# Keep this check origin-based: an old URL can also contain a cache-busting query.
+if WEBAPP_URL.startswith("https://lteam-bot.onrender.com"):
     WEBAPP_URL = "https://lteam-botminiapp.onrender.com"
 TG_CHANNEL_URL = os.getenv("TG_CHANNEL_URL", "").strip()
 TG_CHANNEL_NAME = os.getenv("TG_CHANNEL_NAME", "").strip() or "Канал LTeam"

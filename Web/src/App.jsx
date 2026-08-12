@@ -48,6 +48,7 @@ import "./SettingsWorkspace.css";
 import "./ProfileWorkspace.css";
 import "./ReviewCards.css";
 import "./ReviewSheet.css";
+import "./ThemeBridge.css";
 
 const tg = window.Telegram?.WebApp;
 const API_BASE = import.meta.env.VITE_API_URL || "https://lteam-botminiapp.onrender.com";

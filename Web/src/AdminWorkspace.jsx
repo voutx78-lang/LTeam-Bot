@@ -1,10 +1,113 @@
-import { useEffect, useState } from "react";
-const cards = [["moderation", "Модерация", "Новые услуги и заказы", "✓"], ["payments", "Оплаты", "Проверка чеков и поступлений", "▣"], ["payouts", "Выплаты", "Заявки исполнителей на вывод", "↗"], ["disputes", "Споры", "Разбор проблемных сделок", "!"]];
-export default function AdminWorkspace({ summary = {}, onNavigate, onOpenBot, fetchData, request }) {
-  const [queue, setQueue] = useState([]); const [opening, setOpening] = useState(false); const [queueMode, setQueueMode] = useState("moderation"); const [notice, setNotice] = useState("");
-  const counts = { moderation: summary.moderation ?? 0, payments: summary.payments ?? 0, payouts: summary.payouts ?? 0, disputes: summary.disputes ?? 0 };
-  const openQueue = async (mode) => { try { setQueue(await fetchData(mode === "moderation" ? "/api/admin/moderation" : `/api/admin/queues/${mode}`)); setQueueMode(mode); setOpening(true); } catch { setNotice("Не удалось загрузить рабочую очередь."); } };
-  const decide = async (item, action) => { try { await request(`/api/admin/moderation/${item.item_type}/${item.id}`, "POST", { action }); setQueue((current) => current.filter((row) => row.id !== item.id || row.item_type !== item.item_type)); setNotice(action === "approve" ? "Публикация одобрена." : "Публикация отклонена."); } catch (error) { setNotice(error?.message || "Не удалось обработать публикацию."); } };
-  return <section className="admin-workspace"><header className="admin-workspace-head"><button onClick={() => onNavigate("profile")}>←</button><div><p>LTEAM CONTROL</p><h1>Админ-панель</h1></div><span>ADMIN</span></header><section className="admin-brief"><div><b>{Object.values(counts).reduce((sum, value) => sum + Number(value || 0), 0)}</b><span>требуют внимания</span></div><p>Управляйте проверками и финансовыми действиями через защищённый интерфейс LTeam.</p></section><section className="admin-queue">{cards.map(([key, title, caption, icon]) => <button key={key} onClick={() => openQueue(key)}><i>{icon}</i><span><b>{title}</b><small>{caption}</small></span><strong>{counts[key]}</strong><em>›</em></button>)}</section><section className="admin-tools"><p>ДОПОЛНИТЕЛЬНО</p><button onClick={() => onOpenBot("admin_panel")}>Открыть полную админ-панель бота <span>→</span></button><small>Доступ ограничен администраторами, подтверждёнными сервером.</small></section>{notice && <button className="admin-notice" onClick={() => setNotice("")}>{notice}</button>}{opening && <ModerationSheet queue={queue} mode={queueMode} onClose={() => setOpening(false)} onDecide={decide} onOpenBot={onOpenBot} />}</section>;
+import { useState } from "react";
+
+const queues = [
+  ["moderation", "Модерация", "Новые услуги и заказы", "П"],
+  ["payments", "Оплаты", "Чеки и поступления", "₽"],
+  ["payouts", "Выплаты", "Заявки исполнителей", "↑"],
+  ["disputes", "Споры", "Проблемные сделки", "!"],
+];
+
+const labels = {
+  moderation: ["ОЧЕРЕДЬ МОДЕРАЦИИ", "Публикации на проверке"],
+  payments: ["ОПЛАТЫ", "Сделки на проверке"],
+  payouts: ["ВЫВОДЫ", "Заявки на выплату"],
+  disputes: ["СПОРЫ", "Открытые обращения"],
+};
+
+function money(value) {
+  return Number(value || 0).toLocaleString("ru-RU") + " ₽";
 }
-function ModerationSheet({ queue, mode, onClose, onDecide, onOpenBot }) { const labels={moderation:["ОЧЕРЕДЬ МОДЕРАЦИИ","Новые публикации"],payments:["ПЛАТЕЖИ","Сделки на проверке"],payouts:["ВЫВОДЫ","Заявки исполнителей"],disputes:["СПОРЫ","Проблемные сделки"]}[mode]||["LTEAM","Очередь"]; return <div className="moderation-backdrop" onMouseDown={onClose}><section className="moderation-sheet" onMouseDown={(event) => event.stopPropagation()}><div className="sheet-handle"/><header><div><p>{labels[0]}</p><h2>{labels[1]}</h2></div><button onClick={onClose}>×</button></header>{!queue.length && <div className="moderation-empty">Очередь пуста.</div>}<div className="moderation-list">{queue.map((item) => <article key={`${mode}-${item.id}`}><span>{mode === "moderation" ? (item.item_type === "listing" ? "УСЛУГА" : "ЗАКАЗ") : mode.toUpperCase()}</span><h3>{item.title}</h3><p>{item.description || item.note || "Требуется проверка администратора."}</p><small>{item.category || "LTeam"} · {Number(item.amount || 0).toLocaleString("ru-RU")} ₽</small><footer>{mode === "moderation" ? <><button onClick={() => onDecide(item, "reject")}>Отклонить</button><button onClick={() => onDecide(item, "approve")}>Одобрить</button></> : <button onClick={() => onOpenBot(mode)}>Открыть управление в боте</button>}</footer></article>)}</div></section></div>; }
+
+export default function AdminWorkspace({ summary = {}, onNavigate, onOpenBot, fetchData, request }) {
+  const [queue, setQueue] = useState([]);
+  const [mode, setMode] = useState("moderation");
+  const [opened, setOpened] = useState(false);
+  const [notice, setNotice] = useState("");
+
+  const counts = { moderation: summary.moderation ?? 0, payments: summary.payments ?? 0, payouts: summary.payouts ?? 0, disputes: summary.disputes ?? 0 };
+  const total = Object.values(counts).reduce((sum, value) => sum + Number(value || 0), 0);
+
+  async function openQueue(nextMode) {
+    setNotice("");
+    try {
+      const endpoint = nextMode === "moderation" ? "/api/admin/moderation" : `/api/admin/queues/${nextMode}`;
+      setQueue(await fetchData(endpoint));
+      setMode(nextMode);
+      setOpened(true);
+    } catch (error) {
+      setNotice(error?.message || "Не удалось загрузить очередь. Повторите попытку.");
+    }
+  }
+
+  async function decide(item, action, note = "") {
+    try {
+      await request(`/api/admin/moderation/${item.item_type}/${item.id}`, "POST", { action, note });
+      setQueue((current) => current.filter((row) => row.id !== item.id || row.item_type !== item.item_type));
+      setNotice(action === "approve" ? "Публикация одобрена — автор уже получил уведомление." : "Публикация отклонена, комментарий отправлен автору.");
+    } catch (error) {
+      setNotice(error?.message || "Не удалось обработать публикацию.");
+    }
+  }
+
+  return <section className="admin-workspace">
+    <header className="admin-workspace-head">
+      <button className="admin-back" onClick={() => onNavigate("profile")} aria-label="Назад">‹</button>
+      <div><p>LTEAM CONTROL</p><h1>Админ-центр</h1></div>
+      <span>ADMIN</span>
+    </header>
+
+    <section className="admin-brief">
+      <div className="admin-brief-number"><b>{total}</b><span>задач требуют внимания</span></div>
+      <p>Проверяйте публикации здесь, а финансовые операции и решения по спорам подтверждайте в защищённой панели бота.</p>
+    </section>
+
+    <section className="admin-queue">
+      {queues.map(([key, title, caption, icon]) => <button key={key} onClick={() => openQueue(key)}>
+        <i aria-hidden="true">{icon}</i><span><b>{title}</b><small>{caption}</small></span><strong>{counts[key]}</strong><em>›</em>
+      </button>)}
+    </section>
+
+    <section className="admin-tools">
+      <p>РАСШИРЕННОЕ УПРАВЛЕНИЕ</p>
+      <button onClick={() => onOpenBot("admin_panel")}><span>Открыть админ-панель бота</span><b>→</b></button>
+      <small>Бот используется для выплат, подтверждения переводов, решения споров и действий с аккаунтами.</small>
+    </section>
+
+    {notice && <button className="admin-notice" onClick={() => setNotice("")}><span>✓</span>{notice}<b>×</b></button>}
+    {opened && <QueueSheet queue={queue} mode={mode} onClose={() => setOpened(false)} onDecide={decide} onOpenBot={onOpenBot} />}
+  </section>;
+}
+
+function QueueSheet({ queue, mode, onClose, onDecide, onOpenBot }) {
+  const [rejecting, setRejecting] = useState(null);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState("");
+  const [eyebrow, title] = labels[mode] || ["LTEAM", "Очередь"];
+
+  async function submitDecision(item, action) {
+    setBusy(true);
+    await onDecide(item, action, action === "reject" ? note.trim() : "");
+    setBusy(false); setRejecting(null); setNote("");
+  }
+
+  return <div className="moderation-backdrop" onMouseDown={onClose}>
+    <section className="moderation-sheet" onMouseDown={(event) => event.stopPropagation()}>
+      <div className="sheet-handle" />
+      <header><div><p>{eyebrow}</p><h2>{title}</h2></div><button onClick={onClose} aria-label="Закрыть">×</button></header>
+      {!queue.length && <div className="moderation-empty"><b>В очереди пока пусто</b><span>Новые задачи появятся здесь автоматически.</span></div>}
+      <div className="moderation-list">{queue.map((item) => <article key={`${mode}-${item.id}`}>
+        <div className="admin-item-top"><span>{mode === "moderation" ? (item.item_type === "listing" ? "УСЛУГА" : "ЗАКАЗ") : `#${item.id}`}</span><small>{item.created_at ? new Date(item.created_at).toLocaleDateString("ru-RU") : "LTeam"}</small></div>
+        <h3>{item.title || "Без названия"}</h3>
+        <p>{item.description || item.note || "Требуется проверка администратора."}</p>
+        <div className="admin-item-meta"><span>{item.category || "LTeam"}</span><b>{money(item.amount)}</b></div>
+        <footer>{mode === "moderation" ? <>
+          <button className="admin-reject" onClick={() => { setRejecting(item); setNote(""); }}>Отклонить</button>
+          <button className="admin-approve" disabled={busy} onClick={() => submitDecision(item, "approve")}>Одобрить</button>
+        </> : <button className="admin-bot-action" onClick={() => { setToast("Открываю защищённое действие в боте…"); onOpenBot(mode); }}>Открыть в боте <b>→</b></button>}</footer>
+      </article>)}</div>
+      {toast && <div className="admin-sheet-toast">{toast}</div>}
+      {rejecting && <div className="admin-reject-backdrop"><section className="admin-reject-dialog"><p>КОММЕНТАРИЙ АВТОРУ</p><h3>Почему публикация не подходит?</h3><textarea autoFocus value={note} maxLength={500} placeholder="Например: уточните сроки и добавьте описание результата" onChange={(event) => setNote(event.target.value)} /><small>Комментарий будет отправлен пользователю в Telegram.</small><footer><button onClick={() => setRejecting(null)}>Отмена</button><button disabled={busy} onClick={() => submitDecision(rejecting, "reject")}>Отклонить</button></footer></section></div>}
+    </section>
+  </div>;
+}

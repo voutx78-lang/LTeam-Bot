@@ -89,6 +89,18 @@
 :root[data-theme="light"] .profile-workspace { background: radial-gradient(75% 32% at 50% 0, rgba(120,92,235,.16), transparent 72%), var(--page); }
 :root[data-theme="light"] .settings-workspace { background: radial-gradient(75% 32% at 50% 0, rgba(120,92,235,.14), transparent 72%), var(--page); }
 
+/* The deal chat is a real workspace too, not a separate dark-only screen. */
+.chat-sheet { background: color-mix(in srgb, var(--ink) 18%, transparent); }
+.chat-card { background: radial-gradient(80% 33% at 50% 0, color-mix(in srgb, var(--accent) 15%, transparent), transparent 72%), var(--page) !important; color: var(--ink) !important; }
+.chat-header,.chat-compose { background: color-mix(in srgb, var(--surface) 92%, transparent) !important; border-color: var(--line) !important; }
+.chat-header b { color: var(--ink) !important; }
+.chat-header .round-button,.chat-compose input { background: var(--surface) !important; border-color: var(--line) !important; color: var(--ink) !important; }
+.chat-notice { background: color-mix(in srgb, #52c9ab 12%, var(--surface)) !important; border-color: color-mix(in srgb, #52c9ab 42%, var(--line)) !important; color: #197a64 !important; }
+.messages { background: transparent !important; }
+.message { background: var(--surface) !important; border-color: var(--line) !important; color: var(--ink) !important; box-shadow: var(--shadow); }
+.message.mine { background: linear-gradient(130deg, var(--accent), color-mix(in srgb, var(--accent) 78%, #2d216e)) !important; color: #fff !important; }
+.chat-empty { color: var(--muted) !important; }
+
 /* Selected dark themes keep the same component structure, only different tokens. */
 :root[data-theme="dark"] .marketplace-shell:before,:root[data-theme="midnight"] .marketplace-shell:before { background: radial-gradient(circle at 2% -15%,rgba(124,92,255,.28),transparent 31rem),radial-gradient(circle at 100% 27%,rgba(57,203,190,.09),transparent 27rem),var(--page); }
 :root[data-theme="dark"] .market-card,:root[data-theme="midnight"] .market-card,:root[data-theme="dark"] .work-row,:root[data-theme="midnight"] .work-row { background: var(--surface); }

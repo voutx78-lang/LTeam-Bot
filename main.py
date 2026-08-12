@@ -46,6 +46,7 @@ ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.
 OWNER_IDS = [int(x.strip()) for x in os.getenv("OWNER_IDS", "").split(",") if x.strip()] or (ADMIN_IDS[:1] if ADMIN_IDS else [])
 MODERATOR_IDS = [int(x.strip()) for x in os.getenv("MODERATOR_IDS", "").split(",") if x.strip()]
 STAFF_IDS = sorted(set(ADMIN_IDS) | set(OWNER_IDS) | set(MODERATOR_IDS))
+ADMIN_NOTIFY_IDS = sorted(set(ADMIN_IDS) | set(OWNER_IDS))
 STAFF_ROLE_LEVELS = {"user": 0, "moderator": 1, "admin": 2, "owner": 3}
 
 bot = Bot(token=BOT_TOKEN)
@@ -4646,7 +4647,7 @@ async def listing_publish(call: CallbackQuery, state: FSMContext):
         parse_mode="HTML"
     )
 
-    for admin in ADMIN_IDS:
+    for admin in ADMIN_NOTIFY_IDS:
         await bot.send_message(
             admin,
             f"""
@@ -4870,7 +4871,7 @@ async def promo_receipt_save(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"admin_promo_ok:{promo_id}"), InlineKeyboardButton(text="❌ Отклонить", callback_data=f"admin_promo_no:{promo_id}")],
         [InlineKeyboardButton(text="📦 Открыть объявление", callback_data=f"view_listing:{listing_id}")],
     ])
-    for admin in ADMIN_IDS:
+    for admin in ADMIN_NOTIFY_IDS:
         await bot.send_message(admin, admin_text, reply_markup=keyboard, parse_mode="HTML")
 
 
@@ -6817,7 +6818,7 @@ Username: @{message.from_user.username or "нет"}
         ]
     ])
 
-    for admin in ADMIN_IDS:
+    for admin in ADMIN_NOTIFY_IDS:
         await bot.send_message(admin, admin_text, reply_markup=keyboard, parse_mode="HTML")
 
 

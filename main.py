@@ -13380,41 +13380,6 @@ async def handle_unexpected_update_error(event: ErrorEvent) -> bool:
     return True
 
 
-async def main():
-    if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN не найден. Проверь .env файл")
-
-    init_db()
-    ensure_admin_tables()
-    ensure_profile_tables()
-    ensure_payout_profile_tables()
-    cleanup_protected_punishments()
-
-    print("✅ База данных проверена")
-    print("🚀 Запускаю LTeam Market...")
-
-    try:
-        await setup_bot_commands()
-        if WEBAPP_URL.startswith("https://"):
-            await bot.set_chat_menu_button(
-                menu_button=MenuButtonWebApp(
-                    text="LTeam Market",
-                    web_app=WebAppInfo(url=WEBAPP_URL),
-                )
-            )
-        print("✅ Команды бота установлены")
-    except Exception as e:
-        print(f"⚠️ Команды бота не установлены: {e}")
-
-    try:
-        await dp.start_polling(bot)
-    except Exception as e:
-        print(f"❌ Ошибка polling: {e}")
-        raise
-    finally:
-        await bot.session.close()
-
-
 
 # ===== LTEAM ADMIN CENTER V5 ADDONS =====
 

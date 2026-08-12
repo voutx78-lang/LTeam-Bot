@@ -55,6 +55,32 @@
 .profile-balance-short { background: color-mix(in srgb, #60cdb7 12%, var(--surface)); border-color: color-mix(in srgb, #60cdb7 45%, var(--line)); }
 .profile-balance-short span { color: var(--muted); }
 
+/* Secondary workspaces use the same tokens as the main screens. */
+.wallet-workspace,.support-workspace,.favorites-workspace,.admin-workspace {
+  background: radial-gradient(75% 32% at 50% 0, color-mix(in srgb, var(--accent) 16%, transparent), transparent 72%), var(--page);
+  color: var(--ink);
+}
+.wallet-head button,.support-head button,.favorites-head>button,.admin-back,
+.wallet-stat-grid>div,.wallet-info,.wallet-history article,.support-faq details,
+.support-form textarea,.ticket-history article,.favorites-list article,.favorites-empty,
+.admin-brief,.admin-queue>button,.admin-tools button,.moderation-sheet,
+.moderation-list article,.admin-reject-dialog,.admin-reject-dialog textarea {
+  background: var(--surface); color: var(--ink); border-color: var(--line); box-shadow: var(--shadow);
+}
+.wallet-head b,.support-head h1,.favorites-head h1,.admin-workspace-head h1,
+.wallet-empty b,.favorites-empty b,.support-faq summary,.moderation-sheet h2 { color: var(--ink); }
+.wallet-stat-grid span,.wallet-info span,.wallet-history article small,.support-hero span,
+.support-faq span,.ticket-history span,.favorites-list span,.favorites-empty span,
+.admin-brief span,.admin-brief p,.admin-queue small,.admin-tools small,.moderation-list p,
+.admin-item-top small,.admin-reject-dialog small { color: var(--muted); }
+.wallet-info,.support-hero,.admin-brief { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.wallet-history article>i.in,.ticket-history article>i.closed { background: #e7faf4; color: #19846e; }
+.wallet-history article>i.out,.favorites-list article>button { background: #fff0f5; color: #d83d78; border-color: #ffd3e2; }
+.support-notice,.admin-notice { background: #e8faf4; color: #18775f; border-color: #bfeadf; }
+.admin-queue strong,.favorites-head>span,.wallet-history header>span,.ticket-history header>span { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); color: var(--accent); }
+.moderation-list article,.admin-reject-dialog { color: var(--ink); }
+.admin-item-meta,.admin-tools { border-color: var(--line); }
+
 /* Light theme must stay light even when Telegram/OS prefers dark. */
 :root[data-theme="light"] .marketplace-shell,
 :root[data-theme="light"] .orders-workspace,

@@ -9918,7 +9918,8 @@ async def view_order(call: CallbackQuery):
 
     with db() as conn:
         row = conn.execute("""
-        SELECT customer_id, title, category, budget, description, COALESCE(deadline, 'Не указан'), status
+        SELECT customer_id, title, category, budget, description, COALESCE(deadline, 'Не указан'), status,
+            COALESCE(reference_image_data, '')
         FROM orders
         WHERE id=?
         """, (order_id,)).fetchone()
@@ -9927,7 +9928,7 @@ async def view_order(call: CallbackQuery):
         await call.answer("Заказ не найден", show_alert=True)
         return
 
-    customer_id, title, category, budget, description, deadline, order_status = row
+    customer_id, title, category, budget, description, deadline, order_status, reference_image_data = row
     is_owner = user_id == customer_id
 
     buttons = []
@@ -9935,6 +9936,9 @@ async def view_order(call: CallbackQuery):
         buttons.append([InlineKeyboardButton(text="✋ Откликнуться", callback_data=f"order_apply:{order_id}")])
     else:
         buttons.append([InlineKeyboardButton(text="📨 Смотреть отклики", callback_data=f"order_apps:{order_id}")])
+
+    if str(reference_image_data).startswith("tg:"):
+        buttons.append([InlineKeyboardButton(text="🖼 Показать референс", callback_data=f"view_order_reference:{order_id}")])
 
     buttons.append([InlineKeyboardButton(text="🚨 Пожаловаться", callback_data=f"report_order:{order_id}")])
     if is_admin(user_id):
@@ -9966,6 +9970,29 @@ async def view_order(call: CallbackQuery):
         parse_mode="HTML"
     )
     await call.answer()
+
+
+@dp.callback_query(F.data.startswith("view_order_reference:"))
+async def view_order_reference(call: CallbackQuery):
+    order_id = int(call.data.split(":", 1)[1])
+    with db() as conn:
+        row = conn.execute(
+            "SELECT COALESCE(reference_image_data, '') FROM orders WHERE id=? AND status IN ('active', 'open', 'approved')",
+            (order_id,),
+        ).fetchone()
+    file_ref = str(row[0] if row else "")
+    if not file_ref.startswith("tg:"):
+        await call.answer("Референс не найден.", show_alert=True)
+        return
+    try:
+        await call.message.answer_photo(
+            photo=file_ref[3:],
+            caption=f"🖼 <b>Референс к заказу #{order_id}</b>",
+            parse_mode="HTML",
+        )
+        await call.answer()
+    except Exception:
+        await call.answer("Не получилось открыть референс. Попробуйте позже.", show_alert=True)
 
 
 @dp.callback_query(F.data.startswith("order_owner_hint:"))

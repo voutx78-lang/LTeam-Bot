@@ -34,6 +34,10 @@ def listing_cover_endpoint(listing_id: int) -> str:
     return f"{request.host_url.rstrip('/')}/api/listings/{listing_id}/cover"
 
 
+def order_reference_endpoint(order_id: int) -> str:
+    return f"{request.host_url.rstrip('/')}/api/orders/{order_id}/reference"
+
+
 def notify_admins(text: str) -> None:
     """Best-effort notification for MiniApp actions; the marketplace action itself stays available if Telegram is slow."""
     if not BOT_TOKEN:
@@ -161,6 +165,28 @@ def listing_cover(listing_id: int):
     return send_file(BytesIO(data), mimetype="image/jpeg", max_age=3600)
 
 
+@app.get("/api/orders/<int:order_id>/reference")
+def order_reference(order_id: int):
+    """Serve an optional reference uploaded through the Telegram bot without exposing its file id."""
+    with db() as connection:
+        row = connection.execute(
+            "SELECT COALESCE(reference_image_data, '') AS reference_image_data FROM orders WHERE id=?",
+            (order_id,),
+        ).fetchone()
+    file_id = str(row["reference_image_data"] if row else "")
+    if not file_id.startswith("tg:") or not BOT_TOKEN:
+        return "", 404
+    try:
+        file_info = json.loads(urlopen(f"https://api.telegram.org/bot{BOT_TOKEN}/getFile?file_id={file_id[3:]}", timeout=6).read())
+        path = file_info.get("result", {}).get("file_path")
+        if not path:
+            return "", 404
+        data = urlopen(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{path}", timeout=8).read()
+    except Exception:
+        return "", 404
+    return send_file(BytesIO(data), mimetype="image/jpeg", max_age=3600)
+
+
 @app.get("/api/users/<int:user_id>/avatar")
 def user_avatar(user_id: int):
     """Return a Telegram profile image without exposing the bot token to MiniApp clients."""
@@ -237,6 +263,8 @@ def orders():
     for row in rows:
         item = dict(row)
         item["customer_avatar_url"] = avatar_endpoint(item["customer_id"])
+        if item["reference_image_data"].startswith("tg:"):
+            item["reference_image_data"] = order_reference_endpoint(item["id"])
         result.append(item)
     return jsonify(result)
 

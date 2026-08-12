@@ -650,7 +650,7 @@ def deal_action(deal_id: int):
                 amount = int(payload.get("amount", 0))
             except (TypeError, ValueError):
                 amount = 0
-            if user_id != seller_id or status != "discussion" or amount < 100 or amount > 150000:
+            if user_id != seller_id or status not in {"discussion", "waiting_final_price", "payment_rejected"} or amount < 100 or amount > 150000:
                 return jsonify({"error": "validation", "message": "Итоговую цену может выставить исполнитель после обсуждения."}), 400
             percent = max(0, min(100, int(os.getenv("COMMISSION_PERCENT", "10"))))
             commission = int(amount * percent / 100)

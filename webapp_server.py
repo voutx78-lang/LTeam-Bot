@@ -717,7 +717,7 @@ def admin_summary():
     if int(get_user().get("id", 0)) not in STAFF_ADMIN_IDS:
         return jsonify({"error": "forbidden"}), 403
     with db() as connection:
-        payments = connection.execute("SELECT COUNT(*) FROM deals WHERE status IN ('waiting_payment','waiting_admin_confirm')").fetchone()[0]
+        payments = connection.execute("SELECT COUNT(*) FROM deals WHERE status IN ('waiting_admin_payment_approval','waiting_admin_confirm')").fetchone()[0]
         disputes = connection.execute("SELECT COUNT(*) FROM deals WHERE status='dispute_open'").fetchone()[0]
         payouts = connection.execute("SELECT COUNT(*) FROM withdrawal_requests WHERE status='pending'").fetchone()[0]
         moderation = connection.execute("SELECT (SELECT COUNT(*) FROM listings WHERE status IN ('pending','moderation')) + (SELECT COUNT(*) FROM orders WHERE status='moderation')").fetchone()[0]

@@ -6888,6 +6888,8 @@ async def admin_ticket_reply_send(message: Message, state: FSMContext):
             return
 
         user_id = row[0]
+        conn.execute("UPDATE tickets SET status='answered' WHERE id=?", (ticket_id,))
+        conn.commit()
 
     await bot.send_message(
         user_id,

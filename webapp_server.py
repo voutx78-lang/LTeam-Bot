@@ -234,7 +234,9 @@ def create_listing():
     portfolio = [str(image).strip() for image in portfolio[:4] if str(image).strip().startswith("data:image/")]
     if any(len(image) > 500_000 for image in portfolio):
         return jsonify({"error": "validation", "message": "Каждый пример портфолио должен быть до 350 КБ."}), 400
-    if image_data and (not image_data.startswith("data:image/") or len(image_data) > 900_000):
+    if not image_data:
+        return jsonify({"error": "validation", "message": "Добавьте обложку услуги — она обязательна для публикации."}), 400
+    if not image_data.startswith("data:image/") or len(image_data) > 900_000:
         return jsonify({"error": "validation", "message": "Изображение должно быть картинкой до 650 КБ."}), 400
     try:
         price = max(1, int(payload.get("price", 0)))

@@ -2197,6 +2197,7 @@ async def handle_miniapp_action(message: Message, state: FSMContext):
             "payments": ("Оплаты на проверке", "admin_deals_payments"),
             "payouts": ("Выплаты", "admin_deals_payouts"),
             "disputes": ("Споры", "admin_disputes"),
+            "tickets": ("Обращения в поддержку", "admin_tickets_v2"),
             "panel": ("Админ-панель", "admin_panel"),
         }
         title, callback = sections.get(section, sections["panel"])

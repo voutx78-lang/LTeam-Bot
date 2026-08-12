@@ -1,0 +1,73 @@
+/* One theme contract for every workspace.  Older screens used hard-coded dark
+   colours; this bridge deliberately maps them back to the selected theme. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --page: #f6f7fb;
+  --surface: #ffffff;
+  --ink: #15182b;
+  --muted: #68708a;
+  --line: #e2e5f0;
+  --accent: #6f56e8;
+  --accent2: #9178ff;
+}
+
+:root[data-theme="light"] body,
+:root[data-theme="light"] #root { background: var(--page); color: var(--ink); }
+:root[data-theme="light"] #root { border-color: var(--line); }
+
+/* Full-screen workspaces */
+.marketplace-shell,
+.orders-workspace,
+.profile-workspace,
+.settings-workspace,
+.wallet-workspace,
+.favorites-workspace,
+.support-workspace,
+.admin-workspace { background: var(--page); color: var(--ink); }
+
+.marketplace-shell:before { background:
+  radial-gradient(circle at 2% -15%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 31rem),
+  radial-gradient(circle at 100% 27%, color-mix(in srgb, var(--accent2) 11%, transparent), transparent 27rem),
+  var(--page); }
+
+.market-topbar,.market-dock,.profile-dock { background: color-mix(in srgb, var(--surface) 92%, transparent); border-color: var(--line); }
+.market-brand,.market-heading h1,.seller-line,.service-title,.detail-seller,.profile-workspace,
+.settings-workspace,.orders-workspace { color: var(--ink); }
+.market-heading>span,.market-search input::placeholder,.seller-line small,.order-client small,
+.detail-seller small,.market-found,.orders-intro>span { color: var(--muted); }
+
+.market-search,.market-picker-trigger,.market-card,.work-row,.orders-summary div,
+.profile-identity,.profile-metrics,.profile-menu-item,.theme-choice,.settings-toggle,
+.settings-workspace-head button,.detail-seller,.detail-facts div,.market-detail-sheet,
+.seller-profile-hero,.seller-stat-row,.seller-service-row { background: var(--surface); color: var(--ink); border-color: var(--line); box-shadow: var(--shadow); }
+.market-picker-menu { background: var(--surface); border-color: var(--line); }
+.market-picker-menu button { color: var(--ink); }
+.market-picker-menu button.chosen,.market-picker-menu button:hover { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); color: var(--accent); }
+.market-search input,.application-form input,.application-form textarea { color: var(--ink); }
+.market-badges span,.order-card-top span,.service-meta span,.detail-facts div { background: color-mix(in srgb, var(--page) 90%, var(--accent) 10%); color: var(--muted); }
+.market-badges span:first-child,.service-meta span:first-child { color: var(--accent); }
+.service-card footer,.order-card footer,.work-row footer { border-color: var(--line); }
+.market-heart { background: color-mix(in srgb, var(--surface) 86%, transparent); border-color: var(--line); color: var(--ink); }
+.market-heart.active { color: #d83d78; background: #fff0f5; }
+.order-card>p,.work-row p,.work-meta span,.work-row-head small,.work-client,.profile-identity>div:nth-child(2)>span,
+.profile-identity small,.profile-metrics span,.profile-menu-item small,.theme-choice small,.settings-toggle small { color: var(--muted); }
+.profile-settings,.profile-menu-item>i { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); border-color: var(--line); color: var(--accent); }
+.profile-balance-short { background: color-mix(in srgb, #60cdb7 12%, var(--surface)); border-color: color-mix(in srgb, #60cdb7 45%, var(--line)); }
+.profile-balance-short span { color: var(--muted); }
+
+/* Light theme must stay light even when Telegram/OS prefers dark. */
+:root[data-theme="light"] .marketplace-shell,
+:root[data-theme="light"] .orders-workspace,
+:root[data-theme="light"] .profile-workspace,
+:root[data-theme="light"] .settings-workspace { background: var(--page); color: var(--ink); }
+:root[data-theme="light"] .profile-workspace { background: radial-gradient(75% 32% at 50% 0, rgba(120,92,235,.16), transparent 72%), var(--page); }
+:root[data-theme="light"] .settings-workspace { background: radial-gradient(75% 32% at 50% 0, rgba(120,92,235,.14), transparent 72%), var(--page); }
+
+/* Selected dark themes keep the same component structure, only different tokens. */
+:root[data-theme="dark"] .marketplace-shell:before,:root[data-theme="midnight"] .marketplace-shell:before { background: radial-gradient(circle at 2% -15%,rgba(124,92,255,.28),transparent 31rem),radial-gradient(circle at 100% 27%,rgba(57,203,190,.09),transparent 27rem),var(--page); }
+:root[data-theme="dark"] .market-card,:root[data-theme="midnight"] .market-card,:root[data-theme="dark"] .work-row,:root[data-theme="midnight"] .work-row { background: var(--surface); }
+
+@media (max-width: 540px) {
+  .market-topbar { height: 62px; }
+  .market-content { padding-left: 14px; padding-right: 14px; }
+}

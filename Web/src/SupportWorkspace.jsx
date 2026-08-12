@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 const status = (value) => ({ open: "Открыто", answered: "Есть ответ", closed: "Закрыто" }[value] || "В обработке");
 
@@ -7,8 +7,8 @@ export default function SupportWorkspace({ fetchData, request, onNavigate }) {
   const [text, setText] = useState("");
   const [notice, setNotice] = useState("");
   const [sending, setSending] = useState(false);
-  const load = () => fetchData?.("/api/tickets").then(setTickets).catch(() => setTickets([]));
-  useEffect(() => { load(); }, []);
+  const load = useCallback(() => fetchData?.("/api/tickets").then(setTickets).catch(() => setTickets([])), [fetchData]);
+  useEffect(() => { load(); }, [load]);
   const submit = async (event) => { event.preventDefault(); if (sending) return; setSending(true); try { await request("/api/tickets", "POST", { text }); setText(""); setNotice("Обращение отправлено. Администратор получил уведомление."); load(); } catch (error) { setNotice(error?.message || "Не удалось отправить обращение."); } finally { setSending(false); } };
   return <section className="support-workspace"><header className="support-head"><button onClick={() => onNavigate("profile")}>←</button><div><p>ЦЕНТР ПОМОЩИ</p><h1>Поддержка</h1></div></header><section className="support-hero"><i>?</i><div><b>Мы рядом, если что-то пошло не так</b><span>По сделкам, оплате, публикациям и техническим вопросам.</span></div></section><section className="support-faq"><p>БЫСТРЫЕ ОТВЕТЫ</p><details><summary>Как проходит оплата через гаранта?</summary><span>После выбора исполнителя создаётся сделка. Администратор подтверждает оплату, затем средства переводятся исполнителю после завершения работы.</span></details><details><summary>Почему объявление на модерации?</summary><span>Мы проверяем описание и материалы перед публикацией, чтобы каталог оставался безопасным и понятным.</span></details><details><summary>Когда можно оставить отзыв?</summary><span>Отзывы доступны только после завершённой сделки — так рейтинг остаётся честным.</span></details></section><form className="support-form" onSubmit={submit}><label>Новое обращение<textarea required minLength="8" value={text} onChange={(event) => setText(event.target.value)} placeholder="Коротко опишите вопрос или проблему" maxLength="2000" /></label><button disabled={sending}>{sending ? "Отправляем…" : "Отправить в поддержку"}<span>→</span></button></form>{notice && <p className="support-notice">{notice}</p>}<section className="ticket-history"><header><div><p>МОИ ОБРАЩЕНИЯ</p><h2>История</h2></div><span>{tickets.length}</span></header>{tickets.length ? tickets.map((item) => <article key={item.id}><i className={item.status}>{item.status === "closed" ? "✓" : "•"}</i><div><b>{status(item.status)}</b><span>{item.text}</span></div></article>) : <div className="tickets-empty">Пока нет обращений. Здесь будет видна история общения с поддержкой.</div>}</section></section>;
 }

@@ -66,6 +66,11 @@ def add_cors_headers(response):
     """Разрешает опубликованной MiniApp обращаться к отдельному API-сервису."""
     response.headers["Access-Control-Allow-Origin"] = os.getenv("WEBAPP_ORIGIN", "*")
     response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Telegram-Init-Data"
+    # Telegram WebView can keep the previous SPA bundle alive for a long time.
+    # The HTML shell must always be revalidated; hashed Vite assets remain cacheable.
+    if request.path in {"/", "/index.html"}:
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
     return response
 
 
@@ -339,6 +344,98 @@ def my_listings():
     with db() as connection:
         rows = connection.execute("SELECT id, title, category, price, COALESCE(description, '') AS description, COALESCE(image_data, '') AS image_data, COALESCE(portfolio_data, '[]') AS portfolio_data, status, created_at FROM listings WHERE seller_id=? ORDER BY id DESC LIMIT 100", (user_id,)).fetchall()
     return jsonify([dict(row) for row in rows])
+
+
+@app.get("/api/listing-requests/mine")
+def my_listing_requests():
+    """Seller inbox for service discussion requests created in either UI."""
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    with db() as connection:
+        rows = connection.execute("""SELECT r.id, r.listing_id, r.buyer_id, r.message, r.status, r.deal_id, r.created_at,
+            l.title, l.category, l.price, COALESCE(u.username, '') AS buyer_username, COALESCE(u.display_name, '') AS buyer_name
+            FROM listing_discussion_requests r
+            JOIN listings l ON l.id=r.listing_id
+            LEFT JOIN users u ON u.user_id=r.buyer_id
+            WHERE r.seller_id=? ORDER BY CASE WHEN r.status='new' THEN 0 ELSE 1 END, r.id DESC LIMIT 100""", (user_id,)).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["buyer_avatar_url"] = avatar_endpoint(item["buyer_id"])
+        result.append(item)
+    return jsonify(result)
+
+
+@app.post("/api/listings/<int:listing_id>/requests")
+def create_listing_request(listing_id: int):
+    """Start a protected service discussion without moving the user into a bot-only form."""
+    buyer_id = current_user_id()
+    if not buyer_id:
+        return jsonify({"error": "unauthorized"}), 401
+    message = str((request.get_json(silent=True) or {}).get("message", "")).strip()[:1200]
+    if len(message) < 10:
+        return jsonify({"error": "validation", "message": "Опишите задачу подробнее — минимум 10 символов."}), 400
+    with db() as connection:
+        listing = connection.execute("SELECT seller_id, title FROM listings WHERE id=? AND status='active'", (listing_id,)).fetchone()
+        if not listing:
+            return jsonify({"error": "not_found", "message": "Эта услуга больше недоступна."}), 404
+        seller_id = int(listing["seller_id"])
+        if seller_id == buyer_id:
+            return jsonify({"error": "validation", "message": "Нельзя отправить запрос по своей услуге."}), 400
+        duplicate = connection.execute("SELECT id FROM listing_discussion_requests WHERE listing_id=? AND buyer_id=? AND status='new'", (listing_id, buyer_id)).fetchone()
+        if duplicate:
+            return jsonify({"error": "validation", "message": "Ваш запрос уже ждёт ответа исполнителя."}), 409
+        now = datetime.now().isoformat()
+        cursor = connection.execute("""INSERT INTO listing_discussion_requests
+            (listing_id, buyer_id, seller_id, message, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'new', ?, ?)""", (listing_id, buyer_id, seller_id, message, now, now))
+        connection.commit()
+    notify_user(seller_id, f"Новый запрос по услуге «{listing['title']}». Откройте MiniApp → Профиль → Мои объявления, чтобы принять его.")
+    return jsonify({"ok": True, "request_id": cursor.lastrowid, "status": "new"}), 201
+
+
+@app.post("/api/listing-requests/<int:request_id>/decision")
+def decide_listing_request(request_id: int):
+    """Seller accepts a request into a deal or rejects it; both branches notify the buyer."""
+    seller_id = current_user_id()
+    if not seller_id:
+        return jsonify({"error": "unauthorized"}), 401
+    action = str((request.get_json(silent=True) or {}).get("action", "")).strip().lower()
+    if action not in {"accept", "reject"}:
+        return jsonify({"error": "validation", "message": "Неизвестное действие."}), 400
+    with db() as connection:
+        row = connection.execute("""SELECT r.listing_id, r.buyer_id, r.seller_id, r.message, r.status,
+            l.title, l.price FROM listing_discussion_requests r JOIN listings l ON l.id=r.listing_id WHERE r.id=?""", (request_id,)).fetchone()
+        if not row or int(row["seller_id"]) != seller_id:
+            return jsonify({"error": "forbidden"}), 403
+        if row["status"] != "new":
+            return jsonify({"error": "validation", "message": "Этот запрос уже обработан."}), 409
+        now = datetime.now().isoformat()
+        buyer_id = int(row["buyer_id"])
+        if action == "reject":
+            connection.execute("UPDATE listing_discussion_requests SET status='rejected', updated_at=? WHERE id=?", (now, request_id))
+            connection.commit()
+            deal_id = 0
+        else:
+            amount = max(1, int(row["price"] or 0))
+            percent = max(0, min(100, int(os.getenv("COMMISSION_PERCENT", "10"))))
+            commission = int(amount * percent / 100)
+            payout = amount - commission
+            deal = connection.execute("""INSERT INTO deals
+                (listing_id, order_id, source_type, buyer_id, seller_id, amount, commission, payout, payment_method, status, created_at)
+                VALUES (?, 0, 'listing', ?, ?, ?, ?, ?, 'admin_card_only', 'discussion', ?)""",
+                (row["listing_id"], buyer_id, seller_id, amount, commission, payout, now))
+            deal_id = int(deal.lastrowid)
+            connection.execute("UPDATE listing_discussion_requests SET status='accepted', deal_id=?, updated_at=? WHERE id=?", (deal_id, now, request_id))
+            connection.execute("INSERT INTO deal_messages(deal_id, sender_id, receiver_id, text, created_at) VALUES (?, ?, ?, ?, ?)",
+                (deal_id, buyer_id, seller_id, row["message"], now))
+            connection.commit()
+    if action == "reject":
+        notify_user(buyer_id, f"Исполнитель отклонил запрос по услуге «{row['title']}». Можно выбрать другую услугу в каталоге.")
+        return jsonify({"ok": True, "status": "rejected"})
+    notify_user(buyer_id, f"Исполнитель принял запрос по услуге «{row['title']}». Сделка #{deal_id} открыта — продолжите обсуждение в MiniApp.")
+    return jsonify({"ok": True, "status": "accepted", "deal_id": deal_id}), 201
 
 
 @app.get("/api/applications/mine")

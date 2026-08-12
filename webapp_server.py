@@ -768,6 +768,42 @@ def public_user_reviews(user_id: int):
     return jsonify([dict(row) for row in rows])
 
 
+@app.get("/api/tickets")
+def tickets_api():
+    """Return the current user's support history from the same table as the bot."""
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    with db() as connection:
+        rows = connection.execute(
+            """SELECT id, text, status, created_at
+               FROM tickets WHERE user_id=? ORDER BY id DESC LIMIT 100""",
+            (user_id,),
+        ).fetchall()
+    return jsonify([dict(row) for row in rows])
+
+
+@app.post("/api/tickets")
+def create_ticket_api():
+    """Create a support request that admins can handle from the Telegram bot."""
+    user_id = current_user_id()
+    payload = request.get_json(silent=True) or {}
+    text = str(payload.get("text", "")).strip()[:2000]
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    if len(text) < 8:
+        return jsonify({"error": "validation", "message": "Опишите вопрос минимум в 8 символах."}), 400
+    with db() as connection:
+        cursor = connection.execute(
+            "INSERT INTO tickets(user_id, text, status, created_at) VALUES (?, ?, 'open', ?)",
+            (user_id, text, datetime.now().isoformat()),
+        )
+        ticket_id = cursor.lastrowid
+        connection.commit()
+    notify_admins(f"🆘 Новое обращение #{ticket_id} от пользователя {user_id}\n\n{text[:900]}")
+    return jsonify({"ok": True, "ticket_id": ticket_id}), 201
+
+
 @app.get("/api/reviews/pending")
 def pending_reviews():
     user_id = current_user_id()

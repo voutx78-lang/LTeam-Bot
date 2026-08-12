@@ -46,7 +46,7 @@ function Picker({ label, value, options, onChange, open, setOpen }) {
   </div>;
 }
 
-export default function CatalogV3({ items = [], orders = [], favorites = [], onFavorite, onNavigate, onStartServiceRequest, request, fetchData }) {
+export default function CatalogV3({ items = [], orders = [], favorites = [], onFavorite, onNavigate, request, fetchData }) {
   const [mode, setMode] = useState("services");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("Все");
@@ -56,6 +56,7 @@ export default function CatalogV3({ items = [], orders = [], favorites = [], onF
   const [detail, setDetail] = useState(null);
   const [profile, setProfile] = useState(null);
   const [application, setApplication] = useState({ price: "", deadline: "", comment: "" });
+  const [serviceMessage, setServiceMessage] = useState("");
   const [notice, setNotice] = useState("");
   const [sending, setSending] = useState(false);
 
@@ -93,6 +94,21 @@ export default function CatalogV3({ items = [], orders = [], favorites = [], onF
       setApplication({ price: "", deadline: "", comment: "" });
     } catch (error) {
       setNotice(error?.message || "Не удалось отправить отклик.");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const submitServiceRequest = async () => {
+    if (!detail?.id) return;
+    setSending(true);
+    try {
+      await request(`/api/listings/${detail.id}/requests`, "POST", { message: serviceMessage });
+      setNotice("Запрос отправлен исполнителю. После принятия появится сделка и чат.");
+      setDetail(null);
+      setServiceMessage("");
+    } catch (error) {
+      setNotice(error?.message || "Не удалось отправить запрос исполнителю.");
     } finally {
       setSending(false);
     }
@@ -142,7 +158,7 @@ export default function CatalogV3({ items = [], orders = [], favorites = [], onF
     </main>
     <nav className="market-dock"><button type="button" onClick={() => onNavigate("home")}>⌂<span>Главная</span></button><button type="button" className="active">▦<span>Маркет</span></button><button type="button" onClick={() => onNavigate("orders")}>▤<span>Мои заказы</span></button><button type="button" onClick={() => onNavigate("profile")}>♙<span>Профиль</span></button></nav>
     {notice && <button className="market-notice" type="button" onClick={() => setNotice("")}>{notice}<span>×</span></button>}
-    {detail && <DetailSheet item={detail} onClose={() => setDetail(null)} onProfile={openProfile} onFavorite={onFavorite} favorites={favorites} onCreate={() => { onStartServiceRequest?.(detail.id); setDetail(null); }} application={application} setApplication={setApplication} sending={sending} onApply={submitApplication} />}
+    {detail && <DetailSheet item={detail} onClose={() => setDetail(null)} onProfile={openProfile} onFavorite={onFavorite} favorites={favorites} serviceMessage={serviceMessage} setServiceMessage={setServiceMessage} application={application} setApplication={setApplication} sending={sending} onServiceRequest={submitServiceRequest} onApply={submitApplication} />}
   </section>;
 }
 
@@ -173,7 +189,7 @@ function OrderCard({ item, onDetail }) {
   </article>;
 }
 
-function DetailSheet({ item, onClose, onProfile, onFavorite, favorites, onCreate, application, setApplication, sending, onApply }) {
+function DetailSheet({ item, onClose, onProfile, onFavorite, favorites, serviceMessage, setServiceMessage, application, setApplication, sending, onServiceRequest, onApply }) {
   const isService = item.type === "service";
   const name = sellerName(item);
   return <div className="market-modal-backdrop" role="presentation" onMouseDown={onClose}>
@@ -187,7 +203,7 @@ function DetailSheet({ item, onClose, onProfile, onFavorite, favorites, onCreate
       <p className="detail-description">{item.description || "Исполнитель уточнит детали после создания заказа."}</p>
       {isService && portfolio(item).length > 0 && <section className="detail-portfolio"><h3>Портфолио</h3><div>{portfolio(item).map((image, index) => <img src={image} alt={`Пример работы ${index + 1}`} key={image} />)}</div></section>}
       <div className="detail-facts"><div><span>{isService ? "Стоимость" : "Бюджет"}</span><b>{price(isService ? item.price : item.budget, isService ? "от " : "до ")}</b></div><div><span>Срок</span><b>{isService ? item.delivery_time || "Обсуждается" : item.deadline || "Обсуждается"}</b></div></div>
-      {isService ? <div className="detail-actions"><button type="button" className="secondary" onClick={() => onFavorite(item.id)}>{favorites.includes(item.id) ? "♥ В избранном" : "♡ В избранное"}</button><button type="button" className="primary" onClick={onCreate}>Обсудить услугу</button></div> : <div className="application-form"><h3>Отклик на заказ</h3><div><input value={application.price} onChange={(event) => setApplication({ ...application, price: event.target.value })} inputMode="numeric" placeholder="Ваша цена, ₽" /><input value={application.deadline} onChange={(event) => setApplication({ ...application, deadline: event.target.value })} placeholder="Срок выполнения" /></div><textarea value={application.comment} onChange={(event) => setApplication({ ...application, comment: event.target.value })} placeholder="Коротко расскажите, как выполните задачу" /><button type="button" className="primary" disabled={sending} onClick={onApply}>{sending ? "Отправляем…" : "Отправить отклик"}</button></div>}
+      {isService ? <div className="application-form service-request-form"><h3>Запрос исполнителю</h3><p>Опишите задачу — после принятия создастся защищённая сделка и общий чат.</p><textarea value={serviceMessage} minLength="10" onChange={(event) => setServiceMessage(event.target.value)} placeholder="Что нужно сделать, какие сроки и важные детали?" /><div className="detail-actions"><button type="button" className="secondary" onClick={() => onFavorite(item.id)}>{favorites.includes(item.id) ? "♥ В избранном" : "♡ В избранное"}</button><button type="button" className="primary" disabled={sending || serviceMessage.trim().length < 10} onClick={onServiceRequest}>{sending ? "Отправляем…" : "Отправить запрос"}</button></div></div> : <div className="application-form"><h3>Отклик на заказ</h3><div><input value={application.price} onChange={(event) => setApplication({ ...application, price: event.target.value })} inputMode="numeric" placeholder="Ваша цена, ₽" /><input value={application.deadline} onChange={(event) => setApplication({ ...application, deadline: event.target.value })} placeholder="Срок выполнения" /></div><textarea value={application.comment} onChange={(event) => setApplication({ ...application, comment: event.target.value })} placeholder="Коротко расскажите, как выполните задачу" /><button type="button" className="primary" disabled={sending} onClick={onApply}>{sending ? "Отправляем…" : "Отправить отклик"}</button></div>}
     </section>
   </div>;
 }

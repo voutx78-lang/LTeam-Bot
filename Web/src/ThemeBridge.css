@@ -119,3 +119,145 @@
   .market-topbar { height: 62px; }
   .market-content { padding-left: 14px; padding-right: 14px; }
 }
+
+/*
+  The first version of the MiniApp grew screen by screen, so several old
+  modules still carried a dark-only background.  This is the final safety
+  rail for the light theme: every surface used by a workspace is mapped to
+  the same design tokens, even where an older stylesheet used !important.
+*/
+:root[data-theme="light"] .app-shell,
+:root[data-theme="light"] .listing-composer,
+:root[data-theme="light"] .order-composer,
+:root[data-theme="light"] .guide-page,
+:root[data-theme="light"] .home-screen,
+:root[data-theme="light"] .my-listings-workspace,
+:root[data-theme="light"] .seller-profile-sheet > section,
+:root[data-theme="light"] .listing-sheet > section,
+:root[data-theme="light"] .settings-workspace,
+:root[data-theme="light"] .wallet-workspace,
+:root[data-theme="light"] .favorites-workspace,
+:root[data-theme="light"] .support-workspace,
+:root[data-theme="light"] .admin-workspace,
+:root[data-theme="light"] .orders-workspace,
+:root[data-theme="light"] .profile-workspace {
+  background: var(--page) !important;
+  color: var(--ink) !important;
+}
+
+:root[data-theme="light"] .topbar,
+:root[data-theme="light"] .bottom-nav,
+:root[data-theme="light"] .profile-dock,
+:root[data-theme="light"] .listing-form,
+:root[data-theme="light"] .order-composer form,
+:root[data-theme="light"] .home-hero,
+:root[data-theme="light"] .focus-card,
+:root[data-theme="light"] .guide-steps article,
+:root[data-theme="light"] .guide-link,
+:root[data-theme="light"] .profile-card,
+:root[data-theme="light"] .profile-stats,
+:root[data-theme="light"] .settings-list,
+:root[data-theme="light"] .listing-composer label,
+:root[data-theme="light"] .order-reference-widget,
+:root[data-theme="light"] .service-card,
+:root[data-theme="light"] .order-card,
+:root[data-theme="light"] .deal-card,
+:root[data-theme="light"] .listing-card,
+:root[data-theme="light"] .empty-note,
+:root[data-theme="light"] .create-order,
+:root[data-theme="light"] .list-row,
+:root[data-theme="light"] .wallet-hero,
+:root[data-theme="light"] .wallet-stat-grid > div,
+:root[data-theme="light"] .wallet-info,
+:root[data-theme="light"] .wallet-history article,
+:root[data-theme="light"] .support-hero,
+:root[data-theme="light"] .support-faq details,
+:root[data-theme="light"] .ticket-history article,
+:root[data-theme="light"] .admin-brief,
+:root[data-theme="light"] .admin-queue > button,
+:root[data-theme="light"] .admin-tools button,
+:root[data-theme="light"] .moderation-sheet,
+:root[data-theme="light"] .moderation-list article,
+:root[data-theme="light"] .admin-reject-dialog {
+  background: var(--surface) !important;
+  color: var(--ink) !important;
+  border-color: var(--line) !important;
+  box-shadow: var(--shadow) !important;
+}
+
+:root[data-theme="light"] .topbar .brand,
+:root[data-theme="light"] .page-title h1,
+:root[data-theme="light"] .section-heading h2,
+:root[data-theme="light"] .listing-composer h1,
+:root[data-theme="light"] .order-composer h1,
+:root[data-theme="light"] .guide-page h1,
+:root[data-theme="light"] .guide-page h3,
+:root[data-theme="light"] .home-screen h1,
+:root[data-theme="light"] .home-screen h2,
+:root[data-theme="light"] .profile-card h1,
+:root[data-theme="light"] .profile-card b,
+:root[data-theme="light"] .settings-list button,
+:root[data-theme="light"] .listing-card h3,
+:root[data-theme="light"] .service-card h3,
+:root[data-theme="light"] .order-card h3,
+:root[data-theme="light"] .deal-card h3,
+:root[data-theme="light"] .wallet-workspace h1,
+:root[data-theme="light"] .wallet-workspace h2,
+:root[data-theme="light"] .support-workspace h1,
+:root[data-theme="light"] .admin-workspace h1,
+:root[data-theme="light"] .moderation-sheet h2,
+:root[data-theme="light"] .moderation-list h3 {
+  color: var(--ink) !important;
+}
+
+:root[data-theme="light"] .listing-form input,
+:root[data-theme="light"] .listing-form textarea,
+:root[data-theme="light"] .listing-form select,
+:root[data-theme="light"] .order-composer input,
+:root[data-theme="light"] .order-composer textarea,
+:root[data-theme="light"] .order-composer select,
+:root[data-theme="light"] .support-form textarea,
+:root[data-theme="light"] .application-form input,
+:root[data-theme="light"] .application-form textarea,
+:root[data-theme="light"] .search-box,
+:root[data-theme="light"] .search-box input,
+:root[data-theme="light"] .market-search,
+:root[data-theme="light"] .market-search input {
+  background: var(--surface) !important;
+  color: var(--ink) !important;
+  border-color: var(--line) !important;
+}
+
+:root[data-theme="light"] .listing-form input::placeholder,
+:root[data-theme="light"] .listing-form textarea::placeholder,
+:root[data-theme="light"] .order-composer input::placeholder,
+:root[data-theme="light"] .order-composer textarea::placeholder,
+:root[data-theme="light"] .support-form textarea::placeholder,
+:root[data-theme="light"] .order-card p,
+:root[data-theme="light"] .listing-card .seller,
+:root[data-theme="light"] .profile-card span:not(.avatar),
+:root[data-theme="light"] .profile-stats span,
+:root[data-theme="light"] .wallet-workspace small,
+:root[data-theme="light"] .support-workspace small,
+:root[data-theme="light"] .admin-workspace small {
+  color: var(--muted) !important;
+}
+
+:root[data-theme="light"] .settings-list button,
+:root[data-theme="light"] .bottom-nav button,
+:root[data-theme="light"] .guide-link,
+:root[data-theme="light"] .market-picker-trigger,
+:root[data-theme="light"] .chips button,
+:root[data-theme="light"] .catalog-categories button,
+:root[data-theme="light"] .catalog-toolbar select {
+  background: var(--surface) !important;
+  color: var(--ink) !important;
+  border-color: var(--line) !important;
+}
+
+:root[data-theme="light"] .admin-panel,
+:root[data-theme="light"] .balance-card {
+  background: linear-gradient(135deg, #efeaff, #ded5ff) !important;
+  color: #221952 !important;
+  border-color: #cfc1ff !important;
+}

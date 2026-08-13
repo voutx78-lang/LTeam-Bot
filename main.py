@@ -273,6 +273,8 @@ def money_parts(amount: int) -> tuple[int, int, int]:
 
 
 def lteam_card_payment_text(deal_id: int, amount: int) -> str:
+    if not PAYMENTS_ENABLED:
+        return "<b>LTeam Market beta</b>\n\nPayments are not processed by LTeam yet. Keep the task, final price, files and acceptance in the deal chat. Do not send money, card details or receipts to administrators."
     return f"""
 💳 <b>Оплата через гаранта LTeam</b>
 
@@ -290,6 +292,7 @@ def lteam_card_payment_text(deal_id: int, amount: int) -> str:
 
 def deal_status_title(status: str | None) -> str:
     return {
+        "terms_confirmed": "✅ условия согласованы",
         "discussion": "💬 обсуждение",
         "waiting_final_price": "💰 ждёт итоговую цену",
         "waiting_buyer_price_confirm": "🧾 ждёт подтверждение цены",
@@ -313,6 +316,7 @@ def user_public_status(user_id: int) -> str:
 
 
 from app.database import db, init_db
+from app.market_policy import PAYMENTS_ENABLED
 def ensure_user_search_columns():
     """Мягкая миграция users для поиска по username / имени / нику."""
     with db() as conn:
@@ -5581,7 +5585,7 @@ async def view_deal(call: CallbackQuery):
         other_id = seller_id if user_id == buyer_id else buyer_id
         buttons.append([InlineKeyboardButton(text="💬 Чат заказа", callback_data=f"order_chat:{order_id}:{other_id}")])
 
-    if status in ["discussion", "waiting_final_price", "waiting_buyer_price_confirm", "waiting_admin_payment_approval", "waiting_payment", "waiting_receipt", "waiting_admin_confirm", "in_work", "waiting_buyer_confirm", "waiting_payout", "completed", "payment_rejected"]:
+    if status in ["discussion", "waiting_final_price", "waiting_buyer_price_confirm", "terms_confirmed", "waiting_admin_payment_approval", "waiting_payment", "waiting_receipt", "waiting_admin_confirm", "in_work", "waiting_buyer_confirm", "waiting_payout", "completed", "payment_rejected"]:
         buttons.append([InlineKeyboardButton(text="💬 Чат сделки", callback_data=f"deal_chat:{deal_id}")])
 
     if user_id == seller_id and status in ["discussion", "waiting_final_price", "payment_rejected"]:
@@ -5592,6 +5596,9 @@ async def view_deal(call: CallbackQuery):
             InlineKeyboardButton(text="✅ Подтвердить цену", callback_data=f"buyer_confirm_price:{deal_id}"),
             InlineKeyboardButton(text="❌ Обсудить ещё", callback_data=f"buyer_reject_price:{deal_id}"),
         ])
+
+    if status == "terms_confirmed" and user_id in [buyer_id, seller_id]:
+        buttons.append([InlineKeyboardButton(text="▶️ Начать работу", callback_data=f"deal_start_work:{deal_id}")])
 
     if user_id == buyer_id and status == "waiting_payment":
         buttons.append([InlineKeyboardButton(text="💳 Реквизиты / Я оплатил", callback_data=f"show_payment_details:{deal_id}")])
@@ -5781,6 +5788,14 @@ async def buyer_confirm_price(call: CallbackQuery):
         if status != "waiting_buyer_price_confirm":
             await call.answer("Цена уже обработана или статус изменился.", show_alert=True)
             return
+        if not PAYMENTS_ENABLED:
+            conn.execute("UPDATE deals SET status='terms_confirmed', final_price_confirmed_by=? WHERE id=?", (user_id, deal_id))
+            conn.commit()
+            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="▶️ Начать работу", callback_data=f"deal_start_work:{deal_id}")]])
+            await bot.send_message(seller_id, f"✅ Terms are confirmed for deal #{deal_id}. Start work when ready.", reply_markup=kb)
+            await call.message.edit_text(f"✅ Terms are confirmed for deal #{deal_id}. LTeam does not process payments in beta.", reply_markup=kb)
+            await call.answer("Terms confirmed")
+            return
         conn.execute("UPDATE deals SET status='waiting_admin_payment_approval', final_price_confirmed_by=?, payment_requested_by=? WHERE id=?", (user_id, user_id, deal_id))
         conn.commit()
 
@@ -5882,6 +5897,24 @@ async def admin_reject_payment(call: CallbackQuery):
     await bot.send_message(seller_id, f"❌ Оплата по сделке #{deal_id} отклонена админом. Работу начинать не нужно. Можно обсудить детали и выставить цену заново.", reply_markup=kb, parse_mode="HTML")
     await call.message.edit_text(f"❌ Оплата по сделке #{deal_id} отклонена. Участники уведомлены.", parse_mode="HTML")
     await call.answer("Отклонено")
+
+
+@dp.callback_query(F.data.startswith("deal_start_work:"))
+async def deal_start_work(call: CallbackQuery):
+    deal_id = int(call.data.split(":")[1])
+    user_id = call.from_user.id
+    with db() as conn:
+        deal = conn.execute("SELECT buyer_id, seller_id, status FROM deals WHERE id=?", (deal_id,)).fetchone()
+        if not deal or user_id not in {int(deal[0]), int(deal[1])}:
+            await call.answer("No access", show_alert=True)
+            return
+        if deal[2] != "terms_confirmed":
+            await call.answer("Terms must be confirmed first", show_alert=True)
+            return
+        conn.execute("UPDATE deals SET status='in_work' WHERE id=?", (deal_id,))
+        conn.commit()
+    await call.message.edit_text(f"🛠 Work started on deal #{deal_id}. Keep the result and discussion in the deal chat.")
+    await call.answer("Work started")
 
 
 @dp.callback_query(F.data.startswith("seller_done:"))

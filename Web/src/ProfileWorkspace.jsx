@@ -1,5 +1,27 @@
+function initials(value) {
+  return String(value || "L").trim().slice(0, 1).toUpperCase();
+}
+
+function Row({ icon, title, description, badge, onClick }) {
+  return <button className="account-row" onClick={onClick}>
+    <span className="account-row-icon">{icon}</span>
+    <span className="account-row-copy"><b>{title}</b><small>{description}</small></span>
+    {badge && <span className="account-row-badge">{badge}</span>}
+    <i>›</i>
+  </button>;
+}
+
 export default function ProfileWorkspace({ profile = {}, listings = [], orders = [], deals = [], balance = {}, isSynced, isAdmin, onNavigate, onSettings }) {
   const ownListings = listings.filter((item) => Number(item.seller_id) === Number(profile.id));
-  return <section className="profile-workspace"><header className="profile-workspace-head"><button className="profile-logo" onClick={() => onNavigate("home")}>LT</button><b>Профиль</b><button className="profile-settings" onClick={onSettings}>⚙</button></header><section className="profile-identity"><div className="profile-avatar-lg">{(profile.name || "L").slice(0, 1).toUpperCase()}</div><div><p>ПРОФИЛЬ LTEAM</p><h1>{profile.name || "Пользователь"}</h1><span>{profile.username || "LTeam user"}</span><small className={isSynced ? "synced" : ""}>{isSynced ? "● Синхронизирован с ботом" : "○ Требуется синхронизация"}</small></div></section><section className="profile-metrics"><div><b>{ownListings.length}</b><span>Услуг</span></div><div><b>{orders.length}</b><span>Заказов</span></div><div><b>{deals.length}</b><span>Сделок</span></div></section><section className="profile-balance-short"><div><span>Доступно к выводу</span><b>{Number(balance.available || 0).toLocaleString("ru-RU")} ₽</b></div><button onClick={() => onNavigate("wallet")}>Кошелёк <i>→</i></button></section><section className="profile-menu"><p>УПРАВЛЕНИЕ</p><MenuItem icon="▦" title="Мои объявления" caption="Статусы и публикации" onClick={() => onNavigate("my-listings")} /><MenuItem icon="♡" title="Избранное" caption="Сохранённые услуги" onClick={() => onNavigate("favorites")} /><MenuItem icon="▣" title="Мои заказы" caption="Отклики, сделки и чат" onClick={() => onNavigate("orders")} /></section><section className="profile-menu"><p>ПОМОЩЬ</p><MenuItem icon="?" title="Поддержка" caption="Вопросы и обращения" onClick={() => onNavigate("support")} /><MenuItem icon="✦" title="Как работает гарант" caption="Краткий гид по безопасной сделке" onClick={() => onNavigate("guide")} /></section>{isAdmin && <button className="profile-admin-entry" onClick={() => onNavigate("admin")}><span>◈</span><div><b>Центр управления</b><small>Админ-панель LTeam</small></div><i>→</i></button>}<nav className="profile-dock"><button onClick={() => onNavigate("home")}>⌂<span>Главная</span></button><button onClick={() => onNavigate("catalog")}>▦<span>Маркет</span></button><button onClick={() => onNavigate("orders")}>▣<span>Заказы</span></button><button className="active">◉<span>Профиль</span></button></nav></section>;
+  const activeDeals = deals.filter((deal) => !["completed", "cancelled"].includes(deal.status)).length;
+  const amount = Number(balance.available || 0).toLocaleString("ru-RU");
+  return <section className="account-page">
+    <header className="account-head"><button className="account-mark" onClick={() => onNavigate("home")}>LT</button><div><span>ЛИЧНЫЙ КАБИНЕТ</span><h1>Профиль</h1></div><button className="account-settings" onClick={onSettings} aria-label="Настройки">⚙</button></header>
+    <section className="account-hero"><div className="account-avatar">{initials(profile.name)}</div><div className="account-identity"><div><h2>{profile.name || "Пользователь LTeam"}</h2><span>{profile.username || "LTeam user"}</span></div><small className={isSynced ? "online" : ""}><i />{isSynced ? "Профиль синхронизирован" : "Подключите Telegram"}</small></div><button onClick={onSettings}>Изменить</button></section>
+    <section className="account-stats"><div><b>{ownListings.length}</b><span>Услуг</span></div><div><b>{orders.length}</b><span>Заказов</span></div><div><b>{activeDeals}</b><span>В работе</span></div></section>
+    <button className="account-wallet" onClick={() => onNavigate("wallet")}><span className="account-wallet-icon">₽</span><span><small>ДОСТУПНО К ВЫВОДУ</small><b>{amount} ₽</b></span><strong>Кошелёк <i>→</i></strong></button>
+    <section className="account-section"><p>МОЯ РАБОТА</p><div className="account-list"><Row icon="▦" title="Мои услуги" description="Витрина, модерация и заявки" badge={ownListings.length || null} onClick={() => onNavigate("my-listings")} /><Row icon="▤" title="Заказы и сделки" description="Отклики, договорённости и чат" badge={activeDeals || null} onClick={() => onNavigate("orders")} /><Row icon="♡" title="Избранное" description="Сохранённые услуги исполнителей" onClick={() => onNavigate("favorites")} /></div></section>
+    <section className="account-section"><p>ПОМОЩЬ И БЕЗОПАСНОСТЬ</p><div className="account-list"><Row icon="?" title="Поддержка LTeam" description="Вопросы, обращения и спорные ситуации" onClick={() => onNavigate("support")} /><Row icon="✓" title="Как работает гарант" description="Коротко о безопасной сделке" onClick={() => onNavigate("guide")} /></div></section>
+    {isAdmin && <button className="account-admin" onClick={() => onNavigate("admin")}><span>◆</span><div><small>УПРАВЛЕНИЕ ПЛАТФОРМОЙ</small><b>Админ-центр LTeam</b></div><i>→</i></button>}
+  </section>;
 }
-function MenuItem({ icon, title, caption, onClick }) { return <button className="profile-menu-item" onClick={onClick}><i>{icon}</i><span><b>{title}</b><small>{caption}</small></span><em>›</em></button>; }

@@ -89,3 +89,42 @@ html[data-theme="light"] .product-app .catalog-v3, html[data-theme="light"] .pro
 html[data-theme="light"] .product-app .market-topbar > button:first-child, html[data-theme="light"] .product-app .market-topbar b, html[data-theme="light"] .product-app .market-heading h1, html[data-theme="light"] .product-app .service-card-title, html[data-theme="light"] .product-app .order-card-title, html[data-theme="light"] .product-app .seller-line b, html[data-theme="light"] .product-app .work-row h3 { color: #17182a; }
 html[data-theme="light"] .product-app .market-segment, html[data-theme="light"] .product-app .market-picker-button, html[data-theme="light"] .product-app .market-card, html[data-theme="light"] .product-app .orders-summary div, html[data-theme="light"] .product-app .work-row { border-color: #e1e4ed; background: #fff; }
 html[data-theme="light"] .product-app .market-search { border-color: #e0e3ed; background: #fff; } html[data-theme="light"] .product-app .market-search input { color: #17182a; }
+
+/* High-contrast light theme: a product surface, not washed-out lavender. */
+html[data-theme="light"] .product-app { color: #171827; background: #f6f7fb; }
+html[data-theme="light"] .product-app .pro-topbar { margin-bottom: 18px; }
+html[data-theme="light"] .product-app .pro-brand { color: #171827; }
+html[data-theme="light"] .product-app .pro-brand em { color: #6c4ee6; }
+html[data-theme="light"] .product-app .pro-logo { border: 1px solid #ffffff66; color: #fff; background: linear-gradient(145deg, #8d73ff, #5534c9); box-shadow: 0 10px 22px #6f54df45; }
+html[data-theme="light"] .product-app .pro-admin-button { color: #4d31b5; background: #eae5ff; }
+html[data-theme="light"] .product-app .pro-avatar { color: #fff; background: #6e50db; }
+html[data-theme="light"] .product-app .pro-hero { padding: 25px 22px 18px; border-color: #1a183044; background: radial-gradient(circle at 101% -8%, #5d48c780, transparent 38%), linear-gradient(135deg, #211d3c, #16192b); box-shadow: 0 16px 32px #27204224; }
+html[data-theme="light"] .product-app .pro-hero::after { border-color: #9fefe033; }
+html[data-theme="light"] .product-app .pro-eyebrow { color: #b9aaff; }
+html[data-theme="light"] .product-app .pro-hero h1 { margin-top: 10px; color: #fff; font-size: clamp(28px, 7.6vw, 40px); letter-spacing: -1.4px; }
+html[data-theme="light"] .product-app .pro-hero h1 i { color: #7ce2cf; }
+html[data-theme="light"] .product-app .pro-hero > p { color: #c8cadb; font-size: 13px; line-height: 1.48; font-weight: 550; }
+html[data-theme="light"] .product-app .pro-hero-actions { display: grid; grid-template-columns: 1.15fr .85fr; gap: 9px; margin-top: 18px; }
+html[data-theme="light"] .product-app .pro-primary { color: #13202a; background: linear-gradient(135deg, #8ae6d4, #65d2bd); box-shadow: none; }
+html[data-theme="light"] .product-app .pro-secondary { color: #fff; border-color: #ffffff55; background: #ffffff12; }
+html[data-theme="light"] .product-app .pro-safety { align-items: center; gap: 9px; margin-top: 15px; padding-top: 12px; border-color: #ffffff20; }
+html[data-theme="light"] .product-app .pro-safety > span { width: 22px; height: 22px; color: #12362e; background: #7ce3d0; }
+html[data-theme="light"] .product-app .pro-safety b { color: #fff; font-size: 11px; }
+html[data-theme="light"] .product-app .pro-safety small { display: none; }
+html[data-theme="light"] .product-app .pro-section-head { margin: 27px 0 12px; }
+html[data-theme="light"] .product-app .pro-section-head span, html[data-theme="light"] .product-app .pro-activity span { color: #6e52de; }
+html[data-theme="light"] .product-app .pro-section-head h2 { color: #171827; font-size: 19px; }
+html[data-theme="light"] .product-app .pro-section-head button { color: #5d40cc; }
+html[data-theme="light"] .product-app .pro-feature-grid button { min-height: 116px; border-color: #e2e4ed; border-radius: 16px; background: #fff; box-shadow: 0 8px 20px #20233b0b; }
+html[data-theme="light"] .product-app .pro-feature-grid button:hover { border-color: #7961e1; }
+html[data-theme="light"] .product-app .pro-feature-grid i { color: #6043cc; background: #eeeaff; }
+html[data-theme="light"] .product-app .pro-feature-grid b { color: #222337; }
+html[data-theme="light"] .product-app .pro-feature-grid span { color: #727993; }
+html[data-theme="light"] .product-app .pro-activity { border-color: #e1e4ee; background: #fff; box-shadow: 0 8px 20px #20233b0a; }
+html[data-theme="light"] .product-app .pro-activity h2, html[data-theme="light"] .product-app .pro-activity b { color: #1d1e31; }
+html[data-theme="light"] .product-app .pro-activity small { color: #707791; }
+html[data-theme="light"] .product-app .pro-activity button { color: #6547d1; }
+html[data-theme="light"] .product-app .pro-nav { border-color: #e4e6ee; background: #fffffff7; box-shadow: 0 -8px 24px #1c20300c; }
+html[data-theme="light"] .product-app .pro-nav button { color: #7d849e; }
+html[data-theme="light"] .product-app .pro-nav .active { color: #6749d8; }
+@media (max-width: 420px) { html[data-theme="light"] .product-app .pro-hero-actions { grid-template-columns: 1fr; } html[data-theme="light"] .product-app .pro-secondary { min-height: 40px; } }

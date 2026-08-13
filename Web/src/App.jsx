@@ -233,7 +233,7 @@ function ChatSheet({ chat, currentUserId, onClose }) {
   return <div className="chat-sheet"><div className="sheet-backdrop" onClick={onClose} /><section className="chat-card"><header className="chat-header"><button className="round-button" onClick={onClose}>‹</button><div><p className="eyebrow">{chat.kind === "deal" ? "Безопасная сделка" : "Заказ"}</p><b>{chat.item.title || `Диалог #${chat.item.id}`}</b></div><span className="chat-secure">● защищён</span></header><div className="chat-notice">Переписка хранится в сделке. При споре гарант сможет помочь.</div><div className="messages">{messages.length ? messages.map((message) => <div className={Number(message.sender_id) === Number(currentUserId) ? "message mine" : "message"} key={message.id}><span>{message.text}</span><small>{String(message.created_at || "").slice(11, 16)}</small></div>) : <div className="chat-empty">Пока нет сообщений. Начните обсуждение условий.</div>}</div><form className="chat-compose" onSubmit={submit}><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Написать сообщение..." maxLength="1200" /><button type="submit" disabled={!draft.trim() || sending}>↑</button></form></section></div>
 }
 
-function ListingComposer({ initial, onSubmit, busy, message }) {
+export function ListingComposer({ initial, onSubmit, busy, message }) {
   const [form, setForm] = useState(initial);
   const [preview, setPreview] = useState(initial.image_data || "");
   const [portfolio, setPortfolio] = useState(initial.portfolio_data || []);

@@ -9,6 +9,7 @@ import SupportWorkspace from "./SupportWorkspace";
 import SettingsWorkspace from "./SettingsWorkspace";
 import ProfileWorkspace from "./ProfileWorkspace";
 import OrderComposer from "./OrderComposer";
+import { ListingComposer } from "./App";
 import "./CatalogV3.css";
 import "./Marketplace.css";
 import "./MarketplaceFix.css";
@@ -83,6 +84,7 @@ export default function ProductApp() {
   else if (route === "catalog") content = <CatalogV3 items={listings} orders={orders} favorites={favorites} onFavorite={toggleFavorite} onNavigate={setRoute} request={request} fetchData={call} />;
   else if (route === "orders") content = <OrdersWorkspace orders={orders} deals={deals} profile={profile} fetchData={call} request={request} onNavigate={setRoute} onChat={() => setNotice("Чаты открываются из карточки сделки.")} onDealsChanged={setDeals} />;
   else if (route === "create-order") content = <OrderComposer initial={{ title: "", category: "Разработка", budget: "", deadline: "По договорённости", description: "" }} onClose={() => setRoute("orders")} message={notice} onSubmit={async (form, reset) => { try { await request("/api/orders", "POST", form); reset(); setNotice("Заказ отправлен на модерацию."); refresh(); } catch (error) { setNotice(error.message); } }} />;
+  else if (route === "create") content = <ListingComposer initial={{ title: "", category: "Дизайн", price: "", delivery_time: "По договорённости", description: "", image_data: "", portfolio_data: [] }} message={notice} onSubmit={async (form, reset) => { try { await request("/api/listings", "POST", form); reset(); setNotice("Услуга отправлена на модерацию."); refresh(); setRoute("my-listings"); } catch (error) { setNotice(error.message); } }} />;
   else if (route === "profile") content = <ProfileWorkspace profile={profile} listings={listings} orders={orders} deals={deals} balance={balance} isSynced isAdmin={isAdmin} onNavigate={setRoute} onSettings={() => setSettings(true)} />;
   else if (route === "wallet") content = <WalletWorkspace balance={balance} fetchData={call} onNavigate={setRoute} onWithdraw={() => tg()?.sendData?.("withdraw_start")} />;
   else if (route === "my-listings") content = <MyListingsWorkspace fetchData={call} request={request} onNavigate={setRoute} onOpenDeal={() => { refresh(); setRoute("orders"); }} />;

@@ -20,6 +20,14 @@ ALLOWED_CATEGORIES = (
     "Тексты для каналов и бизнеса",
 )
 
+LEGACY_CATEGORY_MAP = {
+    "Разработка": "Telegram-боты и Mini Apps",
+    "Дизайн": "Дизайн Telegram",
+    "Монтаж": "Монтаж и контент",
+    "Тексты": "Тексты для каналов и бизнеса",
+    "Копирайтинг": "Тексты для каналов и бизнеса",
+}
+
 DISALLOWED_MARKET_TERMS = (
     "аккаунт",
     "аккаунты",
@@ -39,6 +47,11 @@ def validate_category(category: str) -> str | None:
     if category not in ALLOWED_CATEGORIES:
         return "Выберите одно из направлений раннего доступа LTeam Market."
     return None
+
+
+def normalize_category(category: str) -> str:
+    """Move legacy form values into the limited early-access taxonomy."""
+    return LEGACY_CATEGORY_MAP.get((category or "").strip(), (category or "").strip())
 
 
 def validate_market_text(text: str) -> str | None:

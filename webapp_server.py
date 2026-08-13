@@ -18,7 +18,7 @@ from datetime import datetime
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 from app.database import db as shared_db
-from app.market_policy import ALLOWED_CATEGORIES, MARKETPLACE_BETA, PAYMENTS_ENABLED, validate_category, validate_market_text
+from app.market_policy import ALLOWED_CATEGORIES, MARKETPLACE_BETA, PAYMENTS_ENABLED, normalize_category, validate_category, validate_market_text
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_IDS = {int(value.strip()) for value in os.getenv("ADMIN_IDS", "").split(",") if value.strip().isdigit()}
 OWNER_IDS = {int(value.strip()) for value in os.getenv("OWNER_IDS", "").split(",") if value.strip().isdigit()}
@@ -240,7 +240,7 @@ def create_listing():
         return jsonify({"error": "unauthorized"}), 401
     payload = request.get_json(silent=True) or {}
     title = str(payload.get("title", "")).strip()[:120]
-    category = str(payload.get("category", "Другое")).strip()[:80]
+    category = normalize_category(str(payload.get("category", "")).strip()[:80])
     description = str(payload.get("description", "")).strip()[:2000]
     delivery_time = str(payload.get("delivery_time", "По договорённости")).strip()[:80]
     image_data = str(payload.get("image_data", "")).strip()
@@ -304,7 +304,7 @@ def create_order():
         return jsonify({"error": "unauthorized"}), 401
     payload = request.get_json(silent=True) or {}
     title = str(payload.get("title", "")).strip()[:120]
-    category = str(payload.get("category", "Другое")).strip()[:80]
+    category = normalize_category(str(payload.get("category", "")).strip()[:80])
     description = str(payload.get("description", "")).strip()[:2000]
     deadline = str(payload.get("deadline", "По договорённости")).strip()[:80]
     reference_image_data = str(payload.get("reference_image_data", "")).strip()

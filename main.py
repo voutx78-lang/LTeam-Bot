@@ -25,7 +25,7 @@ load_dotenv()  # Эта строка обязательна, она загруз
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
-from aiogram.fsm.storage.memory import MemoryStorage
+from app.storage import SQLiteStorage
 from app.states import (
     AdminBanState, AdminMessageState, AdminMuteState, AdminReasonState,
     AdminRoleState, AdminSearchUserState, AdminUnbanState, AdminUserPickState,
@@ -50,7 +50,7 @@ ADMIN_NOTIFY_IDS = sorted(set(ADMIN_IDS) | set(OWNER_IDS))
 STAFF_ROLE_LEVELS = {"user": 0, "moderator": 1, "admin": 2, "owner": 3}
 
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
+dp = Dispatcher(storage=SQLiteStorage())
 NAV_MENU_MESSAGES: dict[int, tuple[int, int]] = {}
 
 DB_PATH = "market.db"
@@ -79,21 +79,14 @@ TG_CHANNEL_URL = os.getenv("TG_CHANNEL_URL", "").strip()
 TG_CHANNEL_NAME = os.getenv("TG_CHANNEL_NAME", "").strip() or "Канал LTeam"
 
 CATEGORIES = [
-    "🎨 Дизайн",
-    "🤖 Telegram-боты",
-    "🧠 AI-услуги",
-    "✍️ Тексты",
-    "🎬 Монтаж",
-    "📦 Цифровые товары",
-    "🛠 Другое",
+    "Telegram-боты и Mini Apps",
+    "Дизайн Telegram",
+    "Монтаж и контент",
+    "AI-автоматизация",
+    "Тексты для каналов и бизнеса",
 ]
 
-ITEM_TYPES = [
-    "🛠 Услуга",
-    "📦 Товар",
-    "🔑 Доступ/аккаунт",
-    "📁 Файл/шаблон",
-]
+ITEM_TYPES = ["🛠 Услуга"]
 
 CATEGORY_ITEM_TYPES = {
     "🤖 Telegram-боты": [
@@ -1052,7 +1045,7 @@ Score: <b>{security.get('score')}/100</b>
 Факторы:
 {security_reasons_text(security.get('reasons', []), limit=5)}
 
-Рекомендация: не переводите оплату напрямую и ведите сделку только через гаранта LTeam.
+Рекомендация: фиксируйте условия, сообщения и результат внутри заказа LT Market. Платежи площадка пока не принимает.
 """
 
 
@@ -1570,6 +1563,18 @@ class BanMiddleware(BaseMiddleware):
         data: Dict[str, Any],
     ) -> Any:
         user = data.get("event_from_user")
+        if isinstance(event, CallbackQuery) and not PAYMENTS_ENABLED:
+            payment_prefixes = (
+                "pay_", "promo_pay:", "withdraw", "admin_allow_payment:",
+                "admin_confirm_payment:", "admin_reject_payment:", "receipt_",
+                "balance", "payout_",
+            )
+            if str(event.data or "").startswith(payment_prefixes):
+                await event.answer(
+                    "Платежи и внутренний баланс отключены до подключения официального провайдера.",
+                    show_alert=True,
+                )
+                return
         if user and is_banned(user.id):
             if isinstance(event, Message):
                 await event.answer("🚫 Вы заблокированы в LTeam Market. Можно подать апелляцию через поддержку владельцам.")
@@ -1782,8 +1787,8 @@ async def warn_if_bypass_attempt(sender_id: int, text: str, context: str):
         await bot.send_message(
             sender_id,
             "⚠️ <b>LTeam Protect</b>\n\n"
-            "В переписке нельзя уводить сделку в личные сообщения или просить оплату напрямую. "
-            "Для безопасности используйте чат и гарант LTeam.",
+            "В переписке нельзя уводить заказ в личные сообщения или просить оплату напрямую. "
+            "Для безопасности используйте встроенный чат и фиксируйте условия внутри заказа.",
             parse_mode="HTML",
         )
     except Exception:
@@ -2044,7 +2049,7 @@ async def send_home(message: Message):
 🚀 <b>LTeam Market</b>
 ━━━━━━━━━━━━━━
 
-Маркет цифровых услуг, заказов и безопасных сделок через гаранта LTeam.
+Маркет цифровых услуг и заказов прямо в Telegram.
 
 🔎 <b>Каталог услуг</b> — найти исполнителя или цифровой товар
 🧾 <b>Заказы</b> — найти задачу или создать свою
@@ -2105,10 +2110,8 @@ async def handle_miniapp_action(message: Message, state: FSMContext):
     action = str(payload.get("action", ""))
     if action == "withdraw_start":
         await message.answer(
-            "Вывод средств открывается в защищённом сценарии бота.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="Открыть вывод", callback_data="withdraw_start")
-            ]]),
+            "LT Market пока не принимает оплату за заказы и не ведёт внутренний рублёвый баланс. "
+            "Функция вывода отключена до подключения официального платёжного партнёра.",
         )
         return
 
@@ -2239,14 +2242,14 @@ async def command_menu(message: Message, state: FSMContext):
 async def command_help(message: Message):
     await screen_answer(
         message,
-        f"""
+        """
 ━━━━━━━━━━━━━━
 ❓ <b>Помощь LTeam</b>
 ━━━━━━━━━━━━━━
 
-🛡 Сделки проходят через гаранта LTeam.
-💬 Общение — только через бот.
-💰 Комиссия сервиса: <b>{COMMISSION_PERCENT}%</b>.
+Основная работа проходит в MiniApp: каталог, отклики, чат, файлы, результат и отзывы.
+
+Бот отвечает за вход, важные уведомления и поддержку. LT Market пока не принимает оплату за заказы и не хранит деньги пользователей.
 
 Если возникла проблема — используйте жалобу, спор или поддержку.
 """,
@@ -2259,14 +2262,14 @@ async def command_help(message: Message):
 async def command_rules(message: Message):
     await screen_answer(
         message,
-        f"""
+        """
 📜 <b>Правила LTeam Market</b>
 
 1. Не переходите в личные сообщения для сделки, если заказ начался через LTeam.
-2. Не отправляйте оплату напрямую продавцу или покупателю.
-3. Оплата проходит только по реквизитам LTeam, которые показывает бот.
-4. Комиссия сервиса: <b>{COMMISSION_PERCENT}%</b>.
-5. Запрещены обман, спам, фейковые чеки и запрещённые товары/услуги.
+2. Не отправляйте деньги по реквизитам из переписки: платёжный контур LT Market ещё не запущен.
+3. Фиксируйте цену, срок, требования, файлы и результат внутри рабочего пространства заказа.
+4. Запрещены обман, спам, вредоносный код, накрутка, аккаунты, чужие данные и сомнительные доступы.
+5. Отзыв можно оставить только после завершённого заказа.
 6. При проблеме открывайте спор или пишите в поддержку.
 
 Нарушение правил может привести к муту, предупреждению или блокировке.
@@ -2341,7 +2344,7 @@ async def show_place_from_message(message: Message):
 📦 <b>Размещение услуги</b>
 ━━━━━━━━━━━━━━
 
-Создайте объявление, если вы хотите продавать услугу, цифровой товар, шаблон, бота или доступ.
+Создайте объявление, если вы предлагаете цифровую услугу в одном из направлений раннего доступа.
 
 Что лучше писать:
 • что именно вы делаете
@@ -2349,7 +2352,7 @@ async def show_place_from_message(message: Message):
 • срок выполнения
 • что нужно от заказчика
 
-Реквизиты для выплаты указывать не нужно — они запрашиваются только при выводе средств.
+Добавьте понятное описание, обложку, портфолио и тарифы. Платёжные реквизиты LT Market не запрашивает.
 """,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📦 Создать размещение", callback_data="create_listing")],
@@ -2364,20 +2367,19 @@ async def show_place_from_message(message: Message):
 async def show_guarantee_from_message(message: Message):
     await screen_answer(
         message,
-        f"""
+        """
 ━━━━━━━━━━━━━━
-🛡 <b>Гарант LTeam</b>
+🛡 <b>Как устроена работа</b>
 ━━━━━━━━━━━━━━
 
 1. Покупатель и исполнитель обсуждают задачу в чате LTeam.
 2. Исполнитель выставляет итоговую цену.
 3. Покупатель подтверждает цену.
-4. Админ проверяет сделку и разрешает оплату.
-5. Покупатель оплачивает по реквизитам LTeam.
-6. Деньги замораживаются до выполнения.
-7. После подтверждения выполнения деньги идут на баланс исполнителя.
+4. Исполнитель передаёт результат и версии файлов внутри заказа.
+5. Покупатель принимает работу, запрашивает правку или открывает спор.
+6. После завершения обе стороны могут оставить настоящий отзыв.
 
-Комиссия сервиса: <b>{COMMISSION_PERCENT}%</b>.
+LT Market пока не принимает оплату и не является банковским эскроу.
 """,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📜 Правила", callback_data="rules"), InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")],
@@ -2540,17 +2542,17 @@ async def about_company(call: CallbackQuery):
 <b>LTeam Market</b> — Telegram-маркетплейс цифровых услуг, заказов и безопасных сделок.
 
 Что есть внутри:
-• 📦 размещение услуг и цифровых товаров
-• 🧾 заказы от клиентов
-• 💬 безопасные чаты внутри бота
-• 🛡 гарант LTeam
-• ⭐ отзывы и рейтинг
-• 💸 баланс исполнителя и вывод средств
+• услуги исполнителей и задачи заказчиков
+• тарифы, портфолио и сильные профили
+• рабочее пространство заказа, чат и файлы
+• передача результата и запросы правок
+• отзывы только после завершённой работы
+• модерация, жалобы и поддержка
 
-Наша цель — построить удобную экосистему Telegram-сервисов, где заказчик и исполнитель могут работать безопасно.
+Наша цель — сделать понятную площадку для цифровых задач прямо в Telegram. Платежи через LT Market пока отключены.
 """ + channel_promo_text("about"),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=add_channel_button([
-            [InlineKeyboardButton(text="🛡 Как работает гарант", callback_data="guarantee")],
+            [InlineKeyboardButton(text="Как устроена работа", callback_data="guarantee")],
             [InlineKeyboardButton(text="📜 Правила", callback_data="rules"), InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
         ], "📢 Перейти в канал")),
@@ -2563,22 +2565,22 @@ async def about_company(call: CallbackQuery):
 async def rules(call: CallbackQuery):
     await show_screen(
         call,
-        f"""
+        """
 ━━━━━━━━━━━━━━
 📜 <b>Правила LTeam Market</b>
 ━━━━━━━━━━━━━━
 
-<b>1. Сделки только через LTeam</b>
-Не уводите заказ в личные сообщения и не просите оплату напрямую.
+<b>1. Работа внутри заказа</b>
+Фиксируйте условия, сообщения, файлы и результат в LT Market.
 
-<b>2. Оплата только по реквизитам LTeam</b>
-Реквизиты появляются только после проверки админом.
+<b>2. Платежи пока отключены</b>
+LT Market не выдаёт реквизиты, не принимает и не замораживает деньги.
 
-<b>3. Комиссия сервиса</b>
-Комиссия LTeam: <b>{COMMISSION_PERCENT}%</b>.
+<b>3. Честная репутация</b>
+Отзывы доступны только участникам завершённого заказа.
 
 <b>4. Запрещено</b>
-Обман, фейковые чеки, спам, запрещённые товары/услуги, обход гаранта.
+Обман, спам, вредоносный код, накрутка, аккаунты, чужие данные и запрещённые услуги.
 
 <b>5. Споры</b>
 Если возникла проблема — открывайте спор или пишите в поддержку.
@@ -2586,7 +2588,7 @@ async def rules(call: CallbackQuery):
 Нарушения могут привести к предупреждению, муту или блокировке.
 """,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🛡 Как работает гарант", callback_data="guarantee")],
+            [InlineKeyboardButton(text="Как устроена работа", callback_data="guarantee")],
             [InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
         ]),
@@ -2832,17 +2834,16 @@ async def admin_unban_save(message: Message, state: FSMContext):
 @dp.callback_query(F.data == "guarantee")
 async def guarantee(call: CallbackQuery):
     await show_screen(call, 
-        f"""
-🛡 <b>Как работает гарант LTeam</b>
+        """
+🛡 <b>Безопасная работа в LT Market</b>
 
-1. Покупатель выбирает объявление.
-2. Оплачивает заказ на реквизиты LTeam.
-3. Админ подтверждает оплату.
-4. Исполнитель выполняет заказ.
-5. Покупатель подтверждает выполнение.
-6. LTeam переводит деньги исполнителю.
+1. Выберите услугу или опубликуйте задачу.
+2. Обсудите условия во встроенном чате.
+3. Зафиксируйте цену, срок и результат в заказе.
+4. Передавайте файлы и правки внутри сделки.
+5. После приёмки оставьте подтверждённый отзыв.
 
-Комиссия сервиса: <b>{COMMISSION_PERCENT}%</b>.
+<b>Важно:</b> LT Market находится в раннем доступе и пока не принимает оплату за заказы, не хранит деньги и не является банковским эскроу. Не отправляйте платёжные данные незнакомым пользователям.
 """,
         reply_markup=back_home(),
         parse_mode="HTML",
@@ -3554,7 +3555,7 @@ async def view_listing(call: CallbackQuery):
     buttons = []
     if call.from_user.id != seller_id:
         buttons.append([InlineKeyboardButton(text="💬 Обсудить заказ", callback_data=f"ask_seller:{listing_id}")])
-        buttons.append([InlineKeyboardButton(text="🛡 Сделка через гаранта", callback_data=f"ask_seller:{listing_id}")])
+        buttons.append([InlineKeyboardButton(text="📋 Оформить заказ", callback_data=f"ask_seller:{listing_id}")])
     else:
         buttons.append([InlineKeyboardButton(text="👁 Как видят покупатели", callback_data=f"view_listing:{listing_id}")])
 
@@ -3628,7 +3629,7 @@ async def ask_seller(call: CallbackQuery, state: FSMContext):
 • желаемый срок
 • важные требования
 
-⚠️ Контакты и оплата напрямую запрещены. Общение и оплата — через LTeam.
+⚠️ Зафиксируйте задачу, срок и результат внутри LT Market. Площадка пока не принимает оплату за заказы.
 """,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⬅️ К объявлению", callback_data=f"view_listing:{listing_id}")],
@@ -3981,7 +3982,7 @@ def listing_public_text(listing_id: int, seller_id: int, title: str, category: s
 
 🚀 Продвижение: <b>{promo_marker(is_top, is_highlight) or 'обычное'}</b>
 
-🛡 <b>Безопасность:</b> сначала обсудите заказ в боте. Оплата — только через гаранта LTeam.
+🛡 <b>Безопасность:</b> обсудите задачу и зафиксируйте условия внутри LT Market. Платежи площадка пока не принимает.
 """
 
 
@@ -4185,8 +4186,8 @@ async def create_listing(call: CallbackQuery, state: FSMContext):
 📦 <b>Разместить услугу</b>
 ━━━━━━━━━━━━━━
 
-Создайте карточку услуги, товара, шаблона или готового решения.
-Покупатель сможет открыть объявление, обсудить задачу и провести сделку через гаранта LTeam.
+Создайте понятную карточку цифровой услуги или готового решения.
+Покупатель сможет изучить описание, обсудить задачу и оформить заказ внутри LT Market.
 
 <b>Шаг 1 из 6</b>
 Выберите категорию:
@@ -4527,8 +4528,8 @@ def build_listing_preview(data: dict):
 {html.escape(data.get('description', 'Без описания'))}
 
 🛡 <b>Безопасность:</b>
-Покупатель сможет обсудить заказ и оплатить только через гаранта LTeam.
-Реквизиты продавца запрашиваются отдельно при выводе средств.
+Покупатель сможет обсудить задачу и оформить заказ внутри LT Market.
+Платежи и внутренний рублёвый баланс отключены до подключения официального провайдера.
 
 Отправляем объявление на модерацию?
 """
@@ -7287,8 +7288,7 @@ def build_beautiful_profile_text(user_id: int) -> str:
 🏪 Продаж: <b>{sales_count}</b>
 📌 Активных объявлений: <b>{listings_count}</b>
 ⭐ Рейтинг продавца: <b>{rating_text}</b>
-💰 Баланс к выводу: <b>{get_user_balance(user_id)['available']}₽</b>
-🧊 В обработке: <b>{get_user_balance(user_id)['frozen']}₽</b>{channel_promo_text("profile")}
+🧪 Режим: <b>ранний доступ</b>{channel_promo_text("profile")}
 """
 
 
@@ -7298,7 +7298,6 @@ def beautiful_profile_keyboard(user_id: int):
         [InlineKeyboardButton(text="🛡 Trust Passport", callback_data="trust_passport")],
         [InlineKeyboardButton(text="🛡 Статус Protect", callback_data="protect_status"), InlineKeyboardButton(text="⚖️ Апелляция", callback_data="protect_appeal_start")],
         [InlineKeyboardButton(text="📦 Мои покупки", callback_data="my_purchases"), InlineKeyboardButton(text="⭐ Избранное", callback_data="favorites")],
-        [InlineKeyboardButton(text="💰 Баланс", callback_data="balance"), InlineKeyboardButton(text="💸 Вывести", callback_data="withdraw_start")],
         [InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")],
     ]
     add_channel_button(rows, "📢 Канал LTeam")
@@ -7342,7 +7341,7 @@ def trust_recommendations(user_id: int, security: dict | None = None) -> list[st
     tips = []
 
     if security.get("deals_completed", 0) <= 0:
-        tips.append("завершите первую сделку через гаранта LTeam")
+        tips.append("завершите первый заказ внутри LT Market")
     if security.get("reviews_count", 0) < 3:
         tips.append("получите несколько честных отзывов")
     if security.get("bypass_events_count", 0) > 0:
@@ -7357,7 +7356,7 @@ def trust_recommendations(user_id: int, security: dict | None = None) -> list[st
             pass
 
     if not tips:
-        tips.append("продолжайте проводить сделки только через LTeam")
+        tips.append("продолжайте вести условия, файлы и результат внутри LT Market")
     return tips[:5]
 
 
@@ -12045,7 +12044,7 @@ async def admin_appeal_reject(call: CallbackQuery):
 Заявка: <b>#{appeal_id}</b>
 Ограничения остаются активными.
 
-Вы можете снизить риск: не нарушать правила, не уводить сделки в личку, работать через гаранта и дождаться повторной проверки.
+Вы можете снизить риск: не нарушайте правила, не уводите заказ в личку и сохраняйте условия и результат внутри LT Market.
 """, parse_mode="HTML")
     except Exception:
         pass
@@ -13854,13 +13853,14 @@ import asyncio
 # intact, but expose it through a compact navigation shell so a user does not
 # have to remember callback-heavy legacy screens to get to the right flow.
 
-BOT_NAV_MARKET = "🏪 Маркет"
-BOT_NAV_ORDERS = "📌 Заказы"
-BOT_NAV_PLACE = "➕ Разместить"
-BOT_NAV_PROFILE = "👤 Кабинет"
-BOT_NAV_GUARANTEE = "🛡 Гарант"
-BOT_NAV_MENU = "☰ Меню"
-BOT_NAV_ADMIN = "🛠 Управление"
+BOT_NAV_MARKET = "Открыть LT Market"
+BOT_NAV_ORDERS = "Мои заказы"
+BOT_NAV_PLACE = "Создать публикацию"
+BOT_NAV_PROFILE = "Мой профиль"
+BOT_NAV_GUARANTEE = "Правила сервиса"
+BOT_NAV_SUPPORT = "Поддержка"
+BOT_NAV_MENU = "Помощь"
+BOT_NAV_ADMIN = "Центр управления"
 
 
 def home_market_keyboard() -> InlineKeyboardMarkup | None:
@@ -13876,17 +13876,20 @@ def home_market_keyboard() -> InlineKeyboardMarkup | None:
 
 
 def lteam_reply_menu(user_id: int | None = None) -> ReplyKeyboardMarkup:
+    market_button = KeyboardButton(text=BOT_NAV_MARKET)
+    if WEBAPP_URL.startswith("https://"):
+        market_button = KeyboardButton(text=BOT_NAV_MARKET, web_app=WebAppInfo(url=WEBAPP_URL))
     rows = [
-        [KeyboardButton(text=BOT_NAV_MARKET), KeyboardButton(text=BOT_NAV_ORDERS)],
-        [KeyboardButton(text=BOT_NAV_PLACE), KeyboardButton(text=BOT_NAV_PROFILE)],
-        [KeyboardButton(text=BOT_NAV_GUARANTEE), KeyboardButton(text=BOT_NAV_MENU)],
+        [market_button],
+        [KeyboardButton(text=BOT_NAV_ORDERS), KeyboardButton(text=BOT_NAV_PROFILE)],
+        [KeyboardButton(text=BOT_NAV_SUPPORT), KeyboardButton(text=BOT_NAV_MENU)],
     ]
     if user_id and is_staff(user_id):
         rows.append([KeyboardButton(text=BOT_NAV_ADMIN)])
     return ReplyKeyboardMarkup(
         keyboard=rows,
         resize_keyboard=True,
-        input_field_placeholder="Выберите раздел LTeam Market",
+        input_field_placeholder="Сообщение или команда",
     )
 
 
@@ -13898,13 +13901,9 @@ def main_menu(user_id: int | None = None) -> InlineKeyboardMarkup:
             web_app=WebAppInfo(url=WEBAPP_URL),
         )])
     rows.extend([
-        [InlineKeyboardButton(text="🏪 Смотреть каталог", callback_data="market"),
-         InlineKeyboardButton(text="📌 Найти заказ", callback_data="orders_list")],
-        [InlineKeyboardButton(text="➕ Разместить услугу", callback_data="create_listing"),
-         InlineKeyboardButton(text="🧾 Создать заказ", callback_data="create_order")],
-        [InlineKeyboardButton(text="👤 Мой кабинет", callback_data="profile"),
-         InlineKeyboardButton(text="💬 Поддержка", callback_data="support")],
-        [InlineKeyboardButton(text="🛡 Как работает гарант", callback_data="rules")],
+        [InlineKeyboardButton(text="Мои заказы", callback_data="my_deals"),
+         InlineKeyboardButton(text="Поддержка", callback_data="support")],
+        [InlineKeyboardButton(text="Как работает площадка", callback_data="rules")],
     ])
     if user_id and is_staff(user_id):
         rows.append([InlineKeyboardButton(text="🛠 Центр управления", callback_data="admin_panel")])
@@ -13917,12 +13916,13 @@ async def send_home(message: Message):
     name = html.escape(message.from_user.full_name or "пользователь")
     text = (
         f"<b>Добро пожаловать в LTeam Market, {name}!</b>\n\n"
-        "Безопасный маркетплейс услуг и цифровых товаров. "
-        "Общайтесь внутри сделки, а оплату проводит гарант LTeam.\n\n"
+        "Площадка для цифровых задач прямо в Telegram: боты и Mini Apps, "
+        "дизайн, контент, AI-автоматизация и тексты.\n\n"
         "<b>С чего начать:</b>\n"
-        "• откройте Market и найдите исполнителя;\n"
-        "• создайте заказ, чтобы получить отклики;\n"
-        "• разместите услугу и получите новых клиентов."
+        "• откройте MiniApp и выберите готовую услугу;\n"
+        "• разместите задачу, чтобы получить отклики;\n"
+        "• ведите обсуждение, файлы и результат внутри заказа.\n\n"
+        "<i>Ранний доступ: LT Market пока не принимает и не хранит оплату за заказы.</i>"
     )
     try:
         if os.path.exists(BANNER_PATH):
@@ -13936,7 +13936,7 @@ async def send_home(message: Message):
         await message.answer(text, reply_markup=home_market_keyboard(), parse_mode="HTML")
     await set_reply_menu_hint_for_message(
         message, lteam_reply_menu(message.from_user.id),
-        text="Основные разделы всегда доступны в меню под полем ввода.",
+        text="MiniApp и важные разделы доступны под полем ввода.",
     )
 
 
@@ -13955,27 +13955,20 @@ async def send_user_dashboard(message: Message):
             "SELECT COUNT(*) FROM deals WHERE (buyer_id=? OR seller_id=?) AND status NOT IN ('completed','cancelled','deleted')",
             (user_id, user_id),
         ).fetchone()[0]
-        # Earlier local databases did not have a balance column.  Finance
-        # tables are canonical for a live instance, but the dashboard must
-        # still work safely before the first balance migration.
-        user_columns = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
-        balance_row = conn.execute(
-            "SELECT COALESCE(balance, 0) FROM users WHERE user_id=?", (user_id,)
-        ).fetchone() if "balance" in user_columns else None
-    balance = int(balance_row[0] or 0) if balance_row else 0
     text = (
         "<b>Ваш кабинет LTeam</b>\n\n"
         f"Активные услуги: <b>{listing_count}</b>\n"
         f"Заказы: <b>{order_count}</b>\n"
-        f"Активные сделки: <b>{deal_count}</b>\n"
-        f"Баланс: <b>{balance:,} ₽</b>".replace(",", " ")
+        f"Активные сделки: <b>{deal_count}</b>\n\n"
+        "Профиль, публикации и рабочие пространства доступны в MiniApp."
     )
-    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+    dashboard_rows = [
         [InlineKeyboardButton(text="Мои объявления", callback_data="my_listings"),
          InlineKeyboardButton(text="Мои сделки", callback_data="my_deals")],
-        [InlineKeyboardButton(text="Открыть MiniApp", web_app=WebAppInfo(url=WEBAPP_URL))]
-        if WEBAPP_URL.startswith("https://") else [],
-    ]), parse_mode="HTML")
+    ]
+    if WEBAPP_URL.startswith("https://"):
+        dashboard_rows.append([InlineKeyboardButton(text="Открыть LT Market", web_app=WebAppInfo(url=WEBAPP_URL))])
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=dashboard_rows), parse_mode="HTML")
 
 
 @dp.message(Command("status"))
@@ -14012,6 +14005,19 @@ async def nav_profile(message: Message, state: FSMContext):
     await send_user_dashboard(message)
 
 
+@dp.message(F.text == BOT_NAV_SUPPORT)
+async def nav_support(message: Message, state: FSMContext):
+    await state.clear()
+    save_user(message)
+    await message.answer(
+        "<b>Поддержка LT Market</b>\n\nОпишите вопрос одним сообщением — обращение попадёт в очередь команды.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="Создать обращение", callback_data="support")
+        ]]),
+        parse_mode="HTML",
+    )
+
+
 @dp.message(F.text == BOT_NAV_GUARANTEE)
 async def nav_guarantee(message: Message, state: FSMContext):
     await state.clear()
@@ -14034,7 +14040,7 @@ async def nav_admin(message: Message, state: FSMContext):
         await message.answer("Этот раздел доступен только администрации.")
         return
     await message.answer(
-        "<b>Центр управления LTeam</b>\nОткройте очередь модерации, финансы, споры или поддержку.",
+        "<b>Центр управления LTeam</b>\nОткройте модерацию, споры, пользователей или поддержку.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="Открыть админ-панель", callback_data="admin_panel")
         ]]), parse_mode="HTML",
@@ -14047,7 +14053,7 @@ async def setup_bot_commands():
         BotCommand(command="menu", description="Открыть основное меню"),
         BotCommand(command="status", description="Мой кабинет и сделки"),
         BotCommand(command="help", description="Помощь по сервису"),
-        BotCommand(command="rules", description="Правила гаранта"),
+        BotCommand(command="rules", description="Правила площадки"),
         BotCommand(command="cancel", description="Отменить текущее действие"),
     ])
 

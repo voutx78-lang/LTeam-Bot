@@ -18,6 +18,7 @@ from datetime import datetime
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 from app.database import db as shared_db
+from app.events import create_event
 from app.market_policy import ALLOWED_CATEGORIES, MARKETPLACE_BETA, PAYMENTS_ENABLED, normalize_category, validate_category, validate_market_text
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_IDS = {int(value.strip()) for value in os.getenv("ADMIN_IDS", "").split(",") if value.strip().isdigit()}
@@ -51,8 +52,23 @@ def notify_admins(text: str) -> None:
             continue
 
 
-def notify_user(user_id: int, text: str) -> None:
-    """Best-effort user notification; marketplace actions remain successful if Telegram is unavailable."""
+def notify_user(
+    user_id: int,
+    text: str,
+    *,
+    event_type: str = "system",
+    title: str = "Событие в LT Market",
+    route: str = "notifications",
+    entity_id: int = 0,
+) -> None:
+    """Persist the event and mirror it to Telegram when possible."""
+    if user_id:
+        try:
+            with db() as connection:
+                create_event(connection, user_id, event_type, title, text, route, entity_id)
+                connection.commit()
+        except Exception:
+            pass
     if not BOT_TOKEN or not user_id:
         return
     try:
@@ -96,6 +112,13 @@ def get_user() -> dict:
     if not init_data or not BOT_TOKEN:
         return {}
     values = dict(parse_qsl(init_data, keep_blank_values=True))
+    try:
+        auth_date = int(values.get("auth_date", "0"))
+    except (TypeError, ValueError):
+        auth_date = 0
+    max_age = max(300, int(os.getenv("TELEGRAM_INIT_DATA_MAX_AGE", "86400")))
+    if not auth_date or abs(int(time.time()) - auth_date) > max_age:
+        return {}
     received_hash = values.pop("hash", "")
     check_string = "\n".join(f"{key}={values[key]}" for key in sorted(values))
     secret = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
@@ -125,7 +148,13 @@ def health_check():
     try:
         with db() as connection:
             connection.execute("SELECT 1").fetchone()
-        return jsonify({"ok": True, "storage": "cloud_snapshot" if os.getenv("DATABASE_URL") else "local"})
+        return jsonify({
+            "ok": True,
+            "product": "LT Market",
+            "version": "2026.08-professional",
+            "payments_enabled": PAYMENTS_ENABLED,
+            "storage": "cloud_snapshot" if os.getenv("DATABASE_URL") else "local",
+        })
     except Exception:
         return jsonify({"ok": False}), 503
 
@@ -142,30 +171,225 @@ def me():
     user = get_user()
     if not user:
         return jsonify({"authenticated": False, "is_admin": False})
-    return jsonify({"authenticated": True, "id": user.get("id"), "name": " ".join(filter(None, [user.get("first_name"), user.get("last_name")])), "username": user.get("username", ""), "is_admin": int(user.get("id", 0)) in STAFF_ADMIN_IDS})
+    user_id = int(user.get("id", 0))
+    name = " ".join(filter(None, [user.get("first_name"), user.get("last_name")])).strip()
+    now = datetime.now().isoformat()
+    with db() as connection:
+        connection.execute("""INSERT INTO users(user_id, username, created_at, display_name, first_name, last_name)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET username=excluded.username, display_name=excluded.display_name,
+            first_name=excluded.first_name, last_name=excluded.last_name""",
+            (user_id, user.get("username", ""), now, name, user.get("first_name", ""), user.get("last_name", "")))
+        preference = connection.execute("SELECT market_role, theme, notification_settings FROM user_preferences WHERE user_id=?", (user_id,)).fetchone()
+        unread = connection.execute("SELECT COUNT(*) FROM notification_events WHERE user_id=? AND is_read=0", (user_id,)).fetchone()[0]
+        connection.commit()
+    return jsonify({
+        "authenticated": True,
+        "id": user_id,
+        "name": name,
+        "username": user.get("username", ""),
+        "photo_url": user.get("photo_url", "") or avatar_endpoint(user_id),
+        "is_admin": user_id in STAFF_ADMIN_IDS,
+        "role": preference["market_role"] if preference else "both",
+        "theme": preference["theme"] if preference else "system",
+        "unread_notifications": int(unread or 0),
+    })
+
+
+@app.route("/api/preferences", methods=["GET", "PUT"])
+def preferences_api():
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    with db() as connection:
+        if request.method == "PUT":
+            payload = request.get_json(silent=True) or {}
+            role = str(payload.get("role", "both"))
+            theme = str(payload.get("theme", "system"))
+            if role not in {"customer", "executor", "both"} or theme not in {"system", "light", "dark"}:
+                return jsonify({"error": "validation", "message": "Некорректные настройки."}), 400
+            settings = payload.get("notifications", {})
+            if not isinstance(settings, dict):
+                settings = {}
+            connection.execute("""INSERT INTO user_preferences(user_id, market_role, theme, notification_settings, updated_at)
+                VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET market_role=excluded.market_role,
+                theme=excluded.theme, notification_settings=excluded.notification_settings, updated_at=excluded.updated_at""",
+                (user_id, role, theme, json.dumps(settings, ensure_ascii=False), datetime.now().isoformat()))
+            connection.execute("UPDATE users SET market_role=? WHERE user_id=?", (role, user_id))
+            connection.commit()
+        row = connection.execute("SELECT market_role, theme, notification_settings FROM user_preferences WHERE user_id=?", (user_id,)).fetchone()
+    if not row:
+        return jsonify({"role": "both", "theme": "system", "notifications": {"messages": True, "orders": True, "recommendations": True}})
+    try:
+        settings = json.loads(row["notification_settings"] or "{}")
+    except json.JSONDecodeError:
+        settings = {}
+    return jsonify({"role": row["market_role"], "theme": row["theme"], "notifications": settings})
+
+
+@app.get("/api/notifications")
+def notifications_api():
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    with db() as connection:
+        rows = connection.execute("""SELECT id, event_type, title, body, route, entity_id, is_read, created_at
+            FROM notification_events WHERE user_id=? ORDER BY id DESC LIMIT 100""", (user_id,)).fetchall()
+    return jsonify([dict(row) for row in rows])
+
+
+@app.post("/api/notifications/read")
+def read_notifications_api():
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    payload = request.get_json(silent=True) or {}
+    ids = payload.get("ids", [])
+    with db() as connection:
+        if isinstance(ids, list) and ids:
+            clean_ids = [int(value) for value in ids[:100] if str(value).isdigit()]
+            if clean_ids:
+                placeholders = ",".join("?" for _ in clean_ids)
+                connection.execute(f"UPDATE notification_events SET is_read=1 WHERE user_id=? AND id IN ({placeholders})", (user_id, *clean_ids))
+        else:
+            connection.execute("UPDATE notification_events SET is_read=1 WHERE user_id=?", (user_id,))
+        connection.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/favorites", methods=["GET", "POST", "DELETE"])
+def favorites_api():
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    payload = request.get_json(silent=True) or {}
+    with db() as connection:
+        if request.method in {"POST", "DELETE"}:
+            try:
+                listing_id = int(payload.get("listing_id", 0))
+            except (TypeError, ValueError):
+                listing_id = 0
+            if not listing_id:
+                return jsonify({"error": "validation"}), 400
+            if request.method == "POST":
+                connection.execute("INSERT OR IGNORE INTO favorites(user_id, listing_id) VALUES (?, ?)", (user_id, listing_id))
+            else:
+                connection.execute("DELETE FROM favorites WHERE user_id=? AND listing_id=?", (user_id, listing_id))
+            connection.commit()
+        rows = connection.execute("SELECT listing_id FROM favorites WHERE user_id=? ORDER BY rowid DESC", (user_id,)).fetchall()
+    return jsonify({"ids": [int(row[0]) for row in rows]})
+
+
+@app.route("/api/drafts/<draft_type>", methods=["GET", "PUT", "DELETE"])
+def drafts_api(draft_type: str):
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    if draft_type not in {"listing", "order"}:
+        return jsonify({"error": "validation"}), 400
+    with db() as connection:
+        if request.method == "PUT":
+            payload = request.get_json(silent=True) or {}
+            serialized = json.dumps(payload, ensure_ascii=False)
+            if len(serialized) > 250_000:
+                return jsonify({"error": "validation", "message": "Черновик слишком большой."}), 400
+            connection.execute("""INSERT INTO marketplace_drafts(user_id, draft_type, payload, updated_at)
+                VALUES (?, ?, ?, ?) ON CONFLICT(user_id, draft_type) DO UPDATE SET payload=excluded.payload, updated_at=excluded.updated_at""",
+                (user_id, draft_type, serialized, datetime.now().isoformat()))
+            connection.commit()
+            return jsonify({"ok": True})
+        if request.method == "DELETE":
+            connection.execute("DELETE FROM marketplace_drafts WHERE user_id=? AND draft_type=?", (user_id, draft_type))
+            connection.commit()
+            return jsonify({"ok": True})
+        row = connection.execute("SELECT payload, updated_at FROM marketplace_drafts WHERE user_id=? AND draft_type=?", (user_id, draft_type)).fetchone()
+    if not row:
+        return jsonify({"payload": None})
+    try:
+        payload = json.loads(row["payload"] or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    return jsonify({"payload": payload, "updated_at": row["updated_at"]})
 
 
 @app.get("/api/listings")
 def listings():
-    if not current_user_id():
+    user_id = current_user_id()
+    if not user_id:
         return jsonify({"error": "unauthorized"}), 401
     with db() as connection:
         rows = connection.execute("""SELECT l.id, l.title, l.category, l.price, COALESCE(l.description, '') AS description,
             l.seller_id, COALESCE(l.delivery_time, '') AS delivery_time, COALESCE(u.username, '') AS seller_username,
             COALESCE(u.display_name, '') AS seller_name, COALESCE(l.image_data, '') AS image_data,
-            COALESCE(l.portfolio_data, '[]') AS portfolio_data
-            , COALESCE(r.avg_rating, 0) AS avg_rating, COALESCE(r.reviews_count, 0) AS reviews_count
+            COALESCE(l.portfolio_data, '[]') AS portfolio_data, COALESCE(l.revisions, 1) AS revisions,
+            COALESCE(l.requirements, '') AS requirements, COALESCE(l.result_description, '') AS result_description,
+            COALESCE(u.verified, 0) AS seller_verified, l.created_at,
+            COALESCE(r.avg_rating, 0) AS avg_rating, COALESCE(r.reviews_count, 0) AS reviews_count,
+            COALESCE(s.completed_orders, 0) AS completed_orders
             FROM listings l LEFT JOIN users u ON u.user_id=l.seller_id
             LEFT JOIN (SELECT seller_id, AVG(rating) AS avg_rating, COUNT(*) AS reviews_count FROM reviews GROUP BY seller_id) r ON r.seller_id=l.seller_id
+            LEFT JOIN (SELECT seller_id, COUNT(*) AS completed_orders FROM deals WHERE status='completed' GROUP BY seller_id) s ON s.seller_id=l.seller_id
             WHERE l.status='active' ORDER BY COALESCE(l.is_top,0) DESC, l.id DESC LIMIT 50""").fetchall()
+        favorite_ids = {int(row[0]) for row in connection.execute("SELECT listing_id FROM favorites WHERE user_id=?", (user_id,)).fetchall()}
+        package_rows = connection.execute("SELECT listing_id, package_key, title, description, price, delivery_time, revisions FROM listing_packages ORDER BY listing_id, sort_order, id").fetchall()
+    packages_by_listing: dict[int, list[dict]] = {}
+    for package in package_rows:
+        packages_by_listing.setdefault(int(package["listing_id"]), []).append(dict(package))
     result = []
     for row in rows:
         item = dict(row)
         item["avatar_url"] = avatar_endpoint(item["seller_id"])
         if item["image_data"].startswith("tg:"):
             item["image_data"] = listing_cover_endpoint(item["id"])
+        try:
+            item["portfolio_data"] = json.loads(item["portfolio_data"] or "[]")
+        except (TypeError, json.JSONDecodeError):
+            item["portfolio_data"] = []
+        item["packages"] = packages_by_listing.get(int(item["id"]), [])
+        item["is_favorite"] = int(item["id"]) in favorite_ids
         result.append(item)
     return jsonify(result)
+
+
+@app.get("/api/listings/<int:listing_id>")
+def listing_detail(listing_id: int):
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    with db() as connection:
+        row = connection.execute("""SELECT l.id, l.title, l.category, l.price, COALESCE(l.description, '') AS description,
+            l.seller_id, COALESCE(l.delivery_time, '') AS delivery_time, COALESCE(l.image_data, '') AS image_data,
+            COALESCE(l.portfolio_data, '[]') AS portfolio_data, COALESCE(l.revisions, 1) AS revisions,
+            COALESCE(l.requirements, '') AS requirements, COALESCE(l.result_description, '') AS result_description,
+            COALESCE(u.username, '') AS seller_username, COALESCE(u.display_name, '') AS seller_name,
+            COALESCE(u.verified, 0) AS seller_verified, COALESCE(u.bio, '') AS seller_bio,
+            COALESCE(r.avg_rating, 0) AS avg_rating, COALESCE(r.reviews_count, 0) AS reviews_count,
+            COALESCE(s.completed_orders, 0) AS completed_orders, l.created_at
+            FROM listings l LEFT JOIN users u ON u.user_id=l.seller_id
+            LEFT JOIN (SELECT seller_id, AVG(rating) AS avg_rating, COUNT(*) AS reviews_count FROM reviews GROUP BY seller_id) r ON r.seller_id=l.seller_id
+            LEFT JOIN (SELECT seller_id, COUNT(*) AS completed_orders FROM deals WHERE status='completed' GROUP BY seller_id) s ON s.seller_id=l.seller_id
+            WHERE l.id=? AND l.status='active'""", (listing_id,)).fetchone()
+        if not row:
+            return jsonify({"error": "not_found"}), 404
+        packages = connection.execute("SELECT package_key, title, description, price, delivery_time, revisions FROM listing_packages WHERE listing_id=? ORDER BY sort_order, id", (listing_id,)).fetchall()
+        reviews = connection.execute("""SELECT r.id, r.rating, r.text, r.created_at,
+            COALESCE(u.display_name, u.username, 'Заказчик LT Market') AS reviewer_name
+            FROM reviews r LEFT JOIN users u ON u.user_id=r.reviewer_id
+            WHERE r.seller_id=? ORDER BY r.id DESC LIMIT 8""", (row["seller_id"],)).fetchall()
+        connection.execute("""INSERT INTO recently_viewed(user_id, listing_id, viewed_at) VALUES (?, ?, ?)
+            ON CONFLICT(user_id, listing_id) DO UPDATE SET viewed_at=excluded.viewed_at""", (user_id, listing_id, datetime.now().isoformat()))
+        connection.commit()
+    item = dict(row)
+    item["avatar_url"] = avatar_endpoint(item["seller_id"])
+    if item["image_data"].startswith("tg:"):
+        item["image_data"] = listing_cover_endpoint(item["id"])
+    try:
+        item["portfolio_data"] = json.loads(item["portfolio_data"] or "[]")
+    except (TypeError, json.JSONDecodeError):
+        item["portfolio_data"] = []
+    item["packages"] = [dict(package) for package in packages]
+    item["reviews"] = [dict(review) for review in reviews]
+    return jsonify(item)
 
 
 @app.get("/api/listings/<int:listing_id>/cover")
@@ -243,14 +467,23 @@ def create_listing():
     category = normalize_category(str(payload.get("category", "")).strip()[:80])
     description = str(payload.get("description", "")).strip()[:2000]
     delivery_time = str(payload.get("delivery_time", "По договорённости")).strip()[:80]
+    requirements = str(payload.get("requirements", "")).strip()[:1200]
+    result_description = str(payload.get("result_description", "")).strip()[:1200]
+    try:
+        revisions = max(0, min(20, int(payload.get("revisions", 1))))
+    except (TypeError, ValueError):
+        revisions = 1
     image_data = str(payload.get("image_data", "")).strip()
     portfolio = payload.get("portfolio_data", [])
+    packages = payload.get("packages", [])
     category_error = validate_category(category)
     content_error = validate_market_text(f"{title}\n{description}")
     if category_error or content_error:
         return jsonify({"error": "validation", "message": category_error or content_error}), 400
     if not isinstance(portfolio, list):
         portfolio = []
+    if not isinstance(packages, list):
+        packages = []
     portfolio = [str(image).strip() for image in portfolio[:4] if str(image).strip().startswith("data:image/")]
     if any(len(image) > 500_000 for image in portfolio):
         return jsonify({"error": "validation", "message": "Каждый пример портфолио должен быть до 350 КБ."}), 400
@@ -266,14 +499,45 @@ def create_listing():
         return jsonify({"error": "validation", "message": "Заполните название, описание и цену."}), 400
     with db() as connection:
         cursor = connection.execute(
-            """INSERT INTO listings (seller_id, title, category, item_type, condition, price, description, delivery_time, image_data, portfolio_data, status, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (user_id, title, category, "Услуга", "new", price, description, delivery_time, image_data, json.dumps(portfolio, ensure_ascii=False), "pending", datetime.now().isoformat()),
+            """INSERT INTO listings (seller_id, title, category, item_type, condition, price, description,
+               delivery_time, image_data, portfolio_data, revisions, requirements, result_description, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, title, category, "Услуга", "new", price, description, delivery_time, image_data,
+             json.dumps(portfolio, ensure_ascii=False), revisions, requirements, result_description, "pending", datetime.now().isoformat()),
         )
+        listing_id = int(cursor.lastrowid)
+        clean_packages = []
+        for index, package in enumerate(packages[:3]):
+            if not isinstance(package, dict):
+                continue
+            try:
+                package_price = max(1, int(package.get("price", 0)))
+                package_revisions = max(0, min(20, int(package.get("revisions", revisions))))
+            except (TypeError, ValueError):
+                continue
+            package_title = str(package.get("title", "")).strip()[:60]
+            if not package_title or not package_price:
+                continue
+            clean_packages.append((
+                listing_id,
+                str(package.get("package_key", ["basic", "standard", "premium"][index]))[:20],
+                package_title,
+                str(package.get("description", "")).strip()[:600],
+                package_price,
+                str(package.get("delivery_time", delivery_time)).strip()[:80],
+                package_revisions,
+                index,
+            ))
+        if not clean_packages:
+            clean_packages.append((listing_id, "basic", "Базовый", result_description or description[:240], price, delivery_time, revisions, 0))
+        connection.executemany("""INSERT INTO listing_packages
+            (listing_id, package_key, title, description, price, delivery_time, revisions, sort_order)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", clean_packages)
+        connection.execute("DELETE FROM marketplace_drafts WHERE user_id=? AND draft_type='listing'", (user_id,))
         connection.commit()
     notify_admins(f"Новая услуга на модерации\n\n{title}\nКатегория: {category}\nЦена: {price} ₽\nАвтор: {user_id}")
     notify_user(user_id, f"Ваша услуга «{title}» отправлена на модерацию LTeam. После проверки она появится в каталоге.")
-    return jsonify({"ok": True, "listing_id": cursor.lastrowid, "status": "pending"}), 201
+    return jsonify({"ok": True, "listing_id": listing_id, "status": "pending"}), 201
 
 
 @app.get("/api/orders")
@@ -326,6 +590,7 @@ def create_order():
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (user_id, title, category, budget, description, deadline, reference_image_data, "moderation", datetime.now().isoformat()),
         )
+        connection.execute("DELETE FROM marketplace_drafts WHERE user_id=? AND draft_type='order'", (user_id,))
         connection.commit()
     notify_admins(f"Новый заказ на модерации\n\n{title}\nКатегория: {category}\nБюджет: до {budget} ₽\nАвтор: {user_id}")
     notify_user(user_id, f"Заказ «{title}» отправлен на модерацию LTeam. Мы напишем, когда он станет доступен исполнителям.")
@@ -646,11 +911,27 @@ def deals():
     if not user_id:
         return jsonify({"error": "unauthorized"}), 401
     with db() as connection:
-        rows = connection.execute("""SELECT d.id, d.buyer_id, d.seller_id, d.amount, d.commission, d.payout, d.status, d.created_at,
-            COALESCE(l.title, o.title, 'LTeam deal') AS title
+        rows = connection.execute("""SELECT d.id, d.listing_id, d.order_id, d.source_type, d.buyer_id, d.seller_id,
+            d.amount, d.status, d.created_at, COALESCE(d.updated_at, d.created_at) AS updated_at,
+            COALESCE(d.revision_limit, 1) AS revision_limit, COALESCE(d.terms_json, '{}') AS terms_json,
+            COALESCE(l.title, o.title, 'Заказ LT Market') AS title,
+            COALESCE(b.display_name, b.username, 'Заказчик') AS buyer_name,
+            COALESCE(s.display_name, s.username, 'Исполнитель') AS seller_name
             FROM deals d LEFT JOIN listings l ON l.id=d.listing_id LEFT JOIN orders o ON o.id=d.order_id
+            LEFT JOIN users b ON b.user_id=d.buyer_id LEFT JOIN users s ON s.user_id=d.seller_id
             WHERE d.buyer_id=? OR d.seller_id=? ORDER BY d.id DESC LIMIT 50""", (user_id, user_id)).fetchall()
-    return jsonify([dict(row) for row in rows])
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["role"] = "customer" if int(item["buyer_id"]) == user_id else "executor"
+        item["buyer_avatar_url"] = avatar_endpoint(item["buyer_id"])
+        item["seller_avatar_url"] = avatar_endpoint(item["seller_id"])
+        try:
+            item["terms"] = json.loads(item.pop("terms_json") or "{}")
+        except json.JSONDecodeError:
+            item["terms"] = {}
+        result.append(item)
+    return jsonify(result)
 
 
 @app.post("/api/deals/<int:deal_id>/action")
@@ -671,6 +952,8 @@ def deal_action(deal_id: int):
         now = datetime.now().isoformat()
         buyer_id, seller_id, status = int(deal["buyer_id"]), int(deal["seller_id"]), str(deal["status"])
 
+        next_status = status
+        event_type = "deal"
         if action == "set_final_price":
             try:
                 amount = int(payload.get("amount", 0))
@@ -681,28 +964,55 @@ def deal_action(deal_id: int):
             percent = max(0, min(100, int(os.getenv("COMMISSION_PERCENT", "10"))))
             commission = int(amount * percent / 100)
             payout = amount - commission
+            terms = payload.get("terms", {}) if isinstance(payload.get("terms", {}), dict) else {}
+            terms["amount"] = amount
             connection.execute("""UPDATE deals SET amount=?, commission=?, payout=?, status='waiting_buyer_price_confirm',
-                final_price_set_by=? WHERE id=?""", (amount, commission, payout, user_id, deal_id))
+                final_price_set_by=?, terms_json=?, updated_at=? WHERE id=?""",
+                (amount, commission, payout, user_id, json.dumps(terms, ensure_ascii=False), now, deal_id))
             target_user, notice = buyer_id, f"Исполнитель выставил итоговую цену по сделке #{deal_id}. Подтвердите её в MiniApp."
+            next_status = "waiting_buyer_price_confirm"
         elif action == "confirm_price":
             if user_id != buyer_id or status != "waiting_buyer_price_confirm":
                 return jsonify({"error": "validation", "message": "Подтверждение цены сейчас недоступно."}), 400
             next_status = "waiting_admin_payment_approval" if PAYMENTS_ENABLED else "terms_confirmed"
             connection.execute("""UPDATE deals SET status=?,
-                final_price_confirmed_by=?, payment_requested_by=? WHERE id=?""", (next_status, user_id, user_id, deal_id))
-            target_user, notice = seller_id, f"Покупатель подтвердил цену по сделке #{deal_id}. Ожидаем разрешение оплаты администратором."
-            notify_admins(f"Нужна проверка оплаты по сделке #{deal_id}. Сумма: {int(deal['amount'] or 0)} ₽")
-        elif action == "mark_done":
-            if user_id != seller_id or status != "in_work":
-                return jsonify({"error": "validation", "message": "Отметить работу выполненной можно после подтверждения оплаты."}), 400
-            connection.execute("UPDATE deals SET status='waiting_buyer_confirm' WHERE id=?", (deal_id,))
-            target_user, notice = buyer_id, f"Исполнитель отметил работу по сделке #{deal_id} выполненной. Проверьте результат."
+                final_price_confirmed_by=?, payment_requested_by=?, updated_at=? WHERE id=?""",
+                (next_status, user_id, user_id if PAYMENTS_ENABLED else 0, now, deal_id))
+            if PAYMENTS_ENABLED:
+                target_user, notice = seller_id, f"Покупатель подтвердил условия сделки #{deal_id}. Ожидается подтверждение оплаты."
+                notify_admins(f"Нужна проверка оплаты по сделке #{deal_id}. Сумма: {int(deal['amount'] or 0)} ₽")
+            else:
+                target_user, notice = seller_id, f"Покупатель подтвердил условия сделки #{deal_id}. Можно начинать работу."
+        elif action == "start_work":
+            if user_id != seller_id or status != "terms_confirmed":
+                return jsonify({"error": "validation", "message": "Начать работу можно после подтверждения условий заказчиком."}), 400
+            next_status = "in_work"
+            connection.execute("UPDATE deals SET status=?, updated_at=? WHERE id=?", (next_status, now, deal_id))
+            target_user, notice = buyer_id, f"Исполнитель начал работу по заказу #{deal_id}."
         elif action == "confirm_done":
             if user_id != buyer_id or status != "waiting_buyer_confirm":
                 return jsonify({"error": "validation", "message": "Подтверждение выполнения сейчас недоступно."}), 400
-            connection.execute("UPDATE deals SET status='completed' WHERE id=?", (deal_id,))
-            credited = credit_deal_payout(connection, seller_id, deal_id, int(deal["payout"] or 0))
-            target_user, notice = seller_id, f"Сделка #{deal_id} завершена. На баланс зачислено: {int(deal['payout'] or 0)} ₽."
+            next_status = "completed"
+            connection.execute("UPDATE deals SET status='completed', updated_at=? WHERE id=?", (now, deal_id))
+            if PAYMENTS_ENABLED:
+                credit_deal_payout(connection, seller_id, deal_id, int(deal["payout"] or 0))
+            target_user, notice = seller_id, f"Заказ #{deal_id} принят заказчиком. Теперь участники могут оставить отзывы."
+        elif action == "request_revision":
+            reason = str(payload.get("reason", "")).strip()[:1200]
+            if user_id != buyer_id or status != "waiting_buyer_confirm" or len(reason) < 5:
+                return jsonify({"error": "validation", "message": "Опишите, что нужно исправить."}), 400
+            next_status = "in_revision"
+            connection.execute("INSERT INTO revision_requests(deal_id, requester_id, text, status, created_at) VALUES (?, ?, ?, 'open', ?)", (deal_id, user_id, reason, now))
+            connection.execute("UPDATE deals SET status=?, updated_at=? WHERE id=?", (next_status, now, deal_id))
+            target_user, notice = seller_id, f"По заказу #{deal_id} запрошена правка: {reason[:180]}"
+            event_type = "revision"
+        elif action == "cancel":
+            if status not in {"discussion", "waiting_buyer_price_confirm", "terms_confirmed"}:
+                return jsonify({"error": "validation", "message": "На текущем этапе отмена доступна через поддержку."}), 400
+            next_status = "cancelled"
+            connection.execute("UPDATE deals SET status='cancelled', updated_at=? WHERE id=?", (now, deal_id))
+            target_user = seller_id if user_id == buyer_id else buyer_id
+            notice = f"Участник отменил заказ #{deal_id} до начала работы."
         elif action == "open_dispute":
             reason = str(payload.get("reason", "")).strip()[:1200]
             if status in {"completed", "cancelled", "dispute_open"} or len(reason) < 5:
@@ -715,11 +1025,56 @@ def deal_action(deal_id: int):
             target_user = seller_id if user_id == buyer_id else buyer_id
             notice = f"По сделке #{deal_id} открыт спор. Администратор LTeam проверит ситуацию."
             notify_admins(f"Открыт спор по сделке #{deal_id}. Причина: {reason}")
+            next_status = "dispute_open"
+            event_type = "dispute"
         else:
             return jsonify({"error": "validation", "message": "Неизвестное действие по сделке."}), 400
         connection.commit()
-    notify_user(target_user, notice)
-    return jsonify({"ok": True, "status": "completed" if action == "confirm_done" else ({"set_final_price": "waiting_buyer_price_confirm", "confirm_price": "waiting_admin_payment_approval", "mark_done": "waiting_buyer_confirm", "open_dispute": "dispute_open"}[action])})
+    notify_user(target_user, notice, event_type=event_type, title=f"Заказ #{deal_id}", route=f"deal:{deal_id}", entity_id=deal_id)
+    return jsonify({"ok": True, "status": next_status})
+
+
+@app.route("/api/deals/<int:deal_id>/deliveries", methods=["GET", "POST"])
+def deal_deliveries_api(deal_id: int):
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    with db() as connection:
+        deal = connection.execute("SELECT buyer_id, seller_id, status FROM deals WHERE id=?", (deal_id,)).fetchone()
+        if not deal or user_id not in {int(deal["buyer_id"]), int(deal["seller_id"])}:
+            return jsonify({"error": "forbidden"}), 403
+        if request.method == "POST":
+            payload = request.get_json(silent=True) or {}
+            comment = str(payload.get("comment", "")).strip()[:1600]
+            file_data = str(payload.get("file_data", "")).strip()
+            if user_id != int(deal["seller_id"]) or deal["status"] not in {"in_work", "in_revision"}:
+                return jsonify({"error": "validation", "message": "Сейчас нельзя отправить результат."}), 400
+            if len(comment) < 5:
+                return jsonify({"error": "validation", "message": "Опишите переданный результат."}), 400
+            if file_data and len(file_data) > 900_000:
+                return jsonify({"error": "validation", "message": "Файл слишком большой для текущей бета-версии."}), 400
+            version = int(connection.execute("SELECT COALESCE(MAX(version), 0) + 1 FROM deal_deliveries WHERE deal_id=?", (deal_id,)).fetchone()[0])
+            now = datetime.now().isoformat()
+            cursor = connection.execute("INSERT INTO deal_deliveries(deal_id, sender_id, version, comment, file_data, created_at) VALUES (?, ?, ?, ?, ?, ?)", (deal_id, user_id, version, comment, file_data, now))
+            connection.execute("UPDATE revision_requests SET status='resolved', resolved_at=? WHERE deal_id=? AND status='open'", (now, deal_id))
+            connection.execute("UPDATE deals SET status='waiting_buyer_confirm', updated_at=? WHERE id=?", (now, deal_id))
+            connection.commit()
+            notify_user(int(deal["buyer_id"]), f"Исполнитель отправил версию {version} по заказу #{deal_id}. Проверьте результат.", event_type="delivery", title="Получен результат", route=f"deal:{deal_id}", entity_id=deal_id)
+            return jsonify({"ok": True, "delivery_id": cursor.lastrowid, "version": version, "status": "waiting_buyer_confirm"}), 201
+        rows = connection.execute("SELECT id, sender_id, version, comment, file_data, created_at FROM deal_deliveries WHERE deal_id=? ORDER BY version DESC", (deal_id,)).fetchall()
+    return jsonify([dict(row) for row in rows])
+
+
+@app.get("/api/deals/<int:deal_id>/revisions")
+def deal_revisions_api(deal_id: int):
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    with db() as connection:
+        if not can_access_deal(connection, deal_id, user_id):
+            return jsonify({"error": "forbidden"}), 403
+        rows = connection.execute("SELECT id, requester_id, text, status, created_at, resolved_at FROM revision_requests WHERE deal_id=? ORDER BY id DESC", (deal_id,)).fetchall()
+    return jsonify([dict(row) for row in rows])
 
 
 @app.get("/api/balance")
@@ -727,6 +1082,8 @@ def balance():
     user_id = current_user_id()
     if not user_id:
         return jsonify({"error": "unauthorized"}), 401
+    if not PAYMENTS_ENABLED:
+        return jsonify({"enabled": False, "available": 0, "frozen": 0, "total_earned": 0, "total_withdrawn": 0})
     with db() as connection:
         row = connection.execute("SELECT COALESCE(available, 0) AS available, COALESCE(frozen, 0) AS frozen, COALESCE(total_earned, 0) AS total_earned, COALESCE(total_withdrawn, 0) AS total_withdrawn FROM user_balances WHERE user_id=?", (user_id,)).fetchone()
     return jsonify(dict(row) if row else {"available": 0, "frozen": 0, "total_earned": 0, "total_withdrawn": 0})
@@ -737,6 +1094,8 @@ def balance_history_api():
     user_id = current_user_id()
     if not user_id:
         return jsonify({"error": "unauthorized"}), 401
+    if not PAYMENTS_ENABLED:
+        return jsonify([])
     try:
         with db() as connection:
             rows = connection.execute("""SELECT id, tx_type, amount, balance_after, comment, created_at
@@ -771,8 +1130,11 @@ def public_profile(user_id: int):
     if not current_user_id():
         return jsonify({"error": "unauthorized"}), 401
     with db() as connection:
-        user = connection.execute("SELECT COALESCE(username, '') AS username, COALESCE(display_name, '') AS display_name, COALESCE(verified, 0) AS verified FROM users WHERE user_id=?", (user_id,)).fetchone()
+        user = connection.execute("""SELECT COALESCE(username, '') AS username, COALESCE(display_name, '') AS display_name,
+            COALESCE(verified, 0) AS verified, COALESCE(bio, '') AS bio, COALESCE(skills_json, '[]') AS skills_json,
+            COALESCE(market_role, 'both') AS market_role, created_at FROM users WHERE user_id=?""", (user_id,)).fetchone()
         stats = connection.execute("SELECT COALESCE(AVG(rating), 0) AS rating, COUNT(*) AS reviews_count FROM reviews WHERE seller_id=?", (user_id,)).fetchone()
+        completed = connection.execute("SELECT COUNT(*) FROM deals WHERE seller_id=? AND status='completed'", (user_id,)).fetchone()[0]
         listings = connection.execute("SELECT id, title, category, price, COALESCE(delivery_time, '') AS delivery_time, COALESCE(image_data, '') AS image_data, COALESCE(portfolio_data, '[]') AS portfolio_data FROM listings WHERE seller_id=? AND status='active' ORDER BY id DESC LIMIT 30", (user_id,)).fetchall()
     if not user:
         return jsonify({"error": "not_found"}), 404
@@ -781,8 +1143,38 @@ def public_profile(user_id: int):
         item = dict(row)
         if item["image_data"].startswith("tg:"):
             item["image_data"] = listing_cover_endpoint(item["id"])
+        try:
+            item["portfolio_data"] = json.loads(item["portfolio_data"] or "[]")
+        except (TypeError, json.JSONDecodeError):
+            item["portfolio_data"] = []
         listing_data.append(item)
-    return jsonify({"id": user_id, **dict(user), **dict(stats), "avatar_url": avatar_endpoint(user_id), "listings": listing_data})
+    data = dict(user)
+    try:
+        data["skills"] = json.loads(data.pop("skills_json") or "[]")
+    except json.JSONDecodeError:
+        data["skills"] = []
+    level = "Лучший исполнитель" if completed >= 25 and float(stats["rating"] or 0) >= 4.8 else "Надёжный исполнитель" if completed >= 10 else "Активный исполнитель" if completed >= 3 else "Новый исполнитель"
+    return jsonify({"id": user_id, **data, **dict(stats), "completed_orders": int(completed), "level": level, "avatar_url": avatar_endpoint(user_id), "listings": listing_data})
+
+
+@app.put("/api/profile")
+def update_profile_api():
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    payload = request.get_json(silent=True) or {}
+    display_name = str(payload.get("display_name", "")).strip()[:80]
+    bio = str(payload.get("bio", "")).strip()[:1000]
+    skills = payload.get("skills", [])
+    if not isinstance(skills, list):
+        skills = []
+    skills = [str(item).strip()[:40] for item in skills[:8] if str(item).strip()]
+    if len(display_name) < 2:
+        return jsonify({"error": "validation", "message": "Укажите имя или название команды."}), 400
+    with db() as connection:
+        connection.execute("UPDATE users SET display_name=?, bio=?, skills_json=? WHERE user_id=?", (display_name, bio, json.dumps(skills, ensure_ascii=False), user_id))
+        connection.commit()
+    return jsonify({"ok": True, "display_name": display_name, "bio": bio, "skills": skills})
 
 
 @app.get("/api/users/<int:user_id>/reviews")
@@ -837,13 +1229,14 @@ def pending_reviews():
     if not user_id:
         return jsonify({"error": "unauthorized"}), 401
     with db() as connection:
-        rows = connection.execute("""SELECT d.id AS deal_id, d.seller_id, d.amount, COALESCE(o.title, l.title, 'Сделка LTeam') AS title,
-            COALESCE(u.display_name, u.username, 'Исполнитель LTeam') AS seller_name
+        rows = connection.execute("""SELECT d.id AS deal_id, d.buyer_id, d.seller_id, d.amount, COALESCE(o.title, l.title, 'Заказ LT Market') AS title,
+            CASE WHEN d.buyer_id=? THEN COALESCE(s.display_name, s.username, 'Исполнитель') ELSE COALESCE(b.display_name, b.username, 'Заказчик') END AS reviewee_name,
+            CASE WHEN d.buyer_id=? THEN d.seller_id ELSE d.buyer_id END AS reviewee_id
             FROM deals d LEFT JOIN listings l ON l.id=d.listing_id LEFT JOIN orders o ON o.id=d.order_id
-            LEFT JOIN users u ON u.user_id=d.seller_id
-            WHERE d.buyer_id=? AND d.status='completed' AND NOT EXISTS
+            LEFT JOIN users s ON s.user_id=d.seller_id LEFT JOIN users b ON b.user_id=d.buyer_id
+            WHERE (d.buyer_id=? OR d.seller_id=?) AND d.status='completed' AND NOT EXISTS
               (SELECT 1 FROM reviews r WHERE r.deal_id=d.id AND r.reviewer_id=?)
-            ORDER BY d.id DESC LIMIT 20""", (user_id, user_id)).fetchall()
+            ORDER BY d.id DESC LIMIT 20""", (user_id, user_id, user_id, user_id, user_id)).fetchall()
     return jsonify([dict(row) for row in rows])
 
 
@@ -862,13 +1255,21 @@ def create_review(deal_id: int):
         return jsonify({"error": "validation", "message": "Поставьте оценку и оставьте короткий отзыв."}), 400
     with db() as connection:
         deal = connection.execute("SELECT buyer_id, seller_id, status FROM deals WHERE id=?", (deal_id,)).fetchone()
-        if not deal or int(deal["buyer_id"]) != user_id or deal["status"] != "completed":
-            return jsonify({"error": "forbidden", "message": "Отзыв доступен только покупателю после завершённой сделки."}), 403
+        if not deal or user_id not in {int(deal["buyer_id"]), int(deal["seller_id"])} or deal["status"] != "completed":
+            return jsonify({"error": "forbidden", "message": "Отзыв доступен участникам после завершённого заказа."}), 403
         exists = connection.execute("SELECT 1 FROM reviews WHERE deal_id=? AND reviewer_id=?", (deal_id, user_id)).fetchone()
         if exists:
             return jsonify({"error": "validation", "message": "Отзыв по этой сделке уже оставлен."}), 400
-        connection.execute("INSERT INTO reviews (deal_id, reviewer_id, seller_id, rating, text, created_at) VALUES (?, ?, ?, ?, ?, ?)", (deal_id, user_id, deal["seller_id"], rating, text, datetime.now().isoformat()))
+        reviewee_id = int(deal["seller_id"]) if user_id == int(deal["buyer_id"]) else int(deal["buyer_id"])
+        quality = max(1, min(5, int(payload.get("quality_rating", rating) or rating)))
+        communication = max(1, min(5, int(payload.get("communication_rating", rating) or rating)))
+        deadline = max(1, min(5, int(payload.get("deadline_rating", rating) or rating)))
+        connection.execute("""INSERT INTO reviews
+            (deal_id, reviewer_id, seller_id, reviewee_id, rating, quality_rating, communication_rating, deadline_rating, text, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (deal_id, user_id, reviewee_id, reviewee_id, rating, quality, communication, deadline, text, datetime.now().isoformat()))
         connection.commit()
+    notify_user(reviewee_id, f"По завершённому заказу #{deal_id} появился новый отзыв.", event_type="review", title="Новый отзыв", route=f"profile:{reviewee_id}", entity_id=reviewee_id)
     return jsonify({"ok": True}), 201
 
 
@@ -877,9 +1278,9 @@ def admin_summary():
     if int(get_user().get("id", 0)) not in STAFF_ADMIN_IDS:
         return jsonify({"error": "forbidden"}), 403
     with db() as connection:
-        payments = connection.execute("SELECT COUNT(*) FROM deals WHERE status IN ('waiting_admin_payment_approval','waiting_admin_confirm')").fetchone()[0]
+        payments = connection.execute("SELECT COUNT(*) FROM deals WHERE status IN ('waiting_admin_payment_approval','waiting_admin_confirm')").fetchone()[0] if PAYMENTS_ENABLED else 0
         disputes = connection.execute("SELECT COUNT(*) FROM deals WHERE status='dispute_open'").fetchone()[0]
-        payouts = connection.execute("SELECT COUNT(*) FROM withdrawal_requests WHERE status='pending'").fetchone()[0]
+        payouts = connection.execute("SELECT COUNT(*) FROM withdrawal_requests WHERE status='pending'").fetchone()[0] if PAYMENTS_ENABLED else 0
         moderation = connection.execute("SELECT (SELECT COUNT(*) FROM listings WHERE status IN ('pending','moderation')) + (SELECT COUNT(*) FROM orders WHERE status='moderation')").fetchone()[0]
         tickets = connection.execute("SELECT COUNT(*) FROM tickets WHERE status IN ('open', 'answered')").fetchone()[0]
     return jsonify({"payments": payments, "disputes": disputes, "payouts": payouts, "moderation": moderation, "tickets": tickets})
@@ -906,6 +1307,8 @@ def admin_operation_queue(queue_name: str):
         return jsonify({"error": "forbidden"}), 403
     if queue_name not in {"payments", "payouts", "disputes", "tickets"}:
         return jsonify({"error": "not_found"}), 404
+    if queue_name in {"payments", "payouts"} and not PAYMENTS_ENABLED:
+        return jsonify([])
     with db() as connection:
         if queue_name == "payments":
             rows = connection.execute("""SELECT d.id, COALESCE(o.title, l.title, 'Сделка LTeam') AS title,

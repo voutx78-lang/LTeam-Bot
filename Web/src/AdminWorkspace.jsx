@@ -30,7 +30,6 @@ export default function AdminWorkspace({ summary = {}, onNavigate, onOpenBot, fe
   useEffect(() => {
     // Parent refreshes the server summary asynchronously; mirror it for
     // optimistic queue counters without changing the first paint.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLiveCounts(summary);
   }, [summary]);
   const counts = { moderation: liveCounts.moderation ?? 0, payments: liveCounts.payments ?? 0, payouts: liveCounts.payouts ?? 0, disputes: liveCounts.disputes ?? 0, tickets: liveCounts.tickets ?? 0 };

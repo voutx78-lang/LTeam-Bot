@@ -3,6 +3,8 @@
 import sqlite3
 from pathlib import Path
 
+from app.product_schema import init_product_schema
+
 DB_PATH = str(Path(__file__).resolve().parent.parent / "market.db")
 
 def db():
@@ -417,5 +419,9 @@ def init_db():
             created_at TEXT
         )
         """)
+
+        # Product-facing tables are isolated from the legacy bot schema so the
+        # marketplace can evolve without destructive migrations.
+        init_product_schema(conn)
 
         conn.commit()

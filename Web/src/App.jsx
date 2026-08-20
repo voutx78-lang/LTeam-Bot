@@ -304,7 +304,6 @@ export default function App() {
     if (telegramUser) {
       // Telegram injects the initial user object after the component mounts.
       // This one-time bridge intentionally seeds the profile before API sync.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setProfile({ name: [telegramUser.first_name, telegramUser.last_name].filter(Boolean).join(" ") || "Пользователь", username: telegramUser.username ? `@${telegramUser.username}` : "LTeam user" });
     }
 

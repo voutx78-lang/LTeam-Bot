@@ -1,104 +1,183 @@
 import { useCallback, useEffect, useState } from "react";
-import CatalogV3 from "./CatalogV3";
-import OrdersWorkspace from "./OrdersWorkspace";
-import MyListingsWorkspace from "./MyListingsWorkspace";
-import AdminWorkspace from "./AdminWorkspace";
-import WalletWorkspace from "./WalletWorkspace";
-import FavoritesWorkspace from "./FavoritesWorkspace";
-import SupportWorkspace from "./SupportWorkspace";
-import SettingsWorkspace from "./SettingsWorkspace";
-import ProfileWorkspace from "./ProfileWorkspace";
-import OrderComposer from "./OrderComposer";
-import { ListingComposer } from "./App";
-import workspaceCover from "./assets/market-workspace-cover.png";
-import "./CatalogV3.css";
-import "./Marketplace.css";
-import "./MarketplaceFix.css";
-import "./OrdersWorkspace.css";
-import "./OrderComposer.css";
-import "./MyListingsWorkspace.css";
-import "./AdminWorkspace.css";
-import "./AdminModeration.css";
-import "./WalletWorkspace.css";
-import "./FavoritesWorkspace.css";
-import "./SupportWorkspace.css";
-import "./SettingsWorkspace.css";
-import "./ProfileWorkspace.css";
-import "./ReviewCards.css";
-import "./ReviewSheet.css";
-import "./ThemeBridge.css";
-import "./ProfessionalApp.css";
+import HomeScreen from "./product/screens/HomeScreen";
+import CatalogScreen, { ListingDetail, OrderDetail } from "./product/screens/CatalogScreen";
+import CreateScreen from "./product/screens/CreateScreen";
+import OrdersScreen, { DealWorkspace } from "./product/screens/OrdersScreen";
+import AdminScreen from "./product/screens/AdminScreen";
+import { GuideScreen, LegalScreen, NotificationsScreen, ProfileScreen, SellerProfileScreen, SettingsSheet, SupportScreen } from "./product/screens/AccountScreens";
+import Icon from "./product/icons";
+import { BottomNav, Brand, EmptyState, Loading, ServiceCard, Sheet, Toast } from "./product/components";
+import { FALLBACK_CATEGORIES } from "./product/constants";
+import { api, send, telegram } from "./product/api";
+import { preview } from "./product/preview";
+import "./product-ui.css";
 
-const API = import.meta.env.VITE_API_URL || "https://lteam-botminiapp.onrender.com";
-const tg = () => window.Telegram?.WebApp;
-async function call(path, options = {}) {
-  const initData = tg()?.initData || "";
-  const response = await fetch(API + path, { ...options, headers: { ...(options.body ? { "Content-Type": "application/json" } : {}), ...(initData ? { "X-Telegram-Init-Data": initData } : {}) } });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || "Request failed");
-  return payload;
-}
-const nav = [["home", "Главная", "home"], ["catalog", "Каталог", "grid"], ["create", "Создать", "plus"], ["orders", "Заказы", "briefcase"], ["profile", "Профиль", "user"]];
-function Icon({ name, size = 20 }) { const common = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.9, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true }; const paths = { home: <><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1Z" /></>, grid: <><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></>, plus: <><path d="M12 5v14M5 12h14"/></>, briefcase: <><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12h18M10 12v2h4v-2"/></>, user: <><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></>, bell: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></>, search: <><circle cx="11" cy="11" r="6"/><path d="m20 20-4.2-4.2"/></>, arrow: <><path d="M5 12h14M13 6l6 6-6 6"/></>, spark: <><path d="m12 3 1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7Z"/></> }; return <svg {...common}>{paths[name] || paths.spark}</svg>; }
-function Logo() { return <span className="pro-logo">LT</span>; }
-function ProductNav({ active, onNavigate, onCreate }) { return <nav className="pro-nav">{nav.map(([id, text, icon]) => <button key={id} className={`${active === id ? "active" : ""} ${id === "create" ? "pro-nav-create" : ""}`} onClick={() => id === "create" ? onCreate() : onNavigate(id)}><i><Icon name={icon} size={id === "create" ? 22 : 19} /></i><span>{text}</span></button>)}</nav>; }
-function MiniServiceCard({ item, onClick }) { return <button className="home-service-card" onClick={onClick}><div className="home-service-cover">{item.image_data ? <img src={item.image_data} alt="" /> : <span>{String(item.category || "LT").slice(0, 2)}</span>}</div><div><b>{item.title}</b><small>{item.seller_name || item.seller_username || "Исполнитель LTeam"}</small><footer><span>★ {item.reviews_count ? Number(item.avg_rating || 0).toFixed(1) : "Новый"}</span><strong>от {Number(item.price || 0).toLocaleString("ru-RU")} ₽</strong></footer></div></button>; }
-function Home({ profile, listings, orders, onNavigate, isAdmin, onCreate }) {
-  const categoryNames = ["Telegram-боты", "Дизайн", "Монтаж", "AI"], featured = listings.slice(0, 4), openOrders = orders.slice(0, 2);
-  return <section className="pro-home">
-    <header className="pro-topbar"><button className="pro-brand" onClick={() => onNavigate("home")}><Logo /><b>LT <em>Market</em></b><small>Бета</small></button><div className="pro-top-actions">{isAdmin && <button className="pro-admin-button" onClick={() => onNavigate("admin")}>Команда</button>}<button className="pro-bell" aria-label="Уведомления" onClick={() => onNavigate("notifications")}><Icon name="bell" /></button><button className="pro-avatar" onClick={() => onNavigate("profile")}>{String(profile.name || "L").slice(0, 1).toUpperCase()}</button></div></header>
-    <button className="home-search" onClick={() => onNavigate("catalog")}><Icon name="search" /><span>Найти услугу или исполнителя</span></button>
-    <section className="home-categories"><div className="home-section-title"><h1>Что нужно сделать?</h1><button onClick={() => onNavigate("catalog")}>Все категории</button></div><div>{categoryNames.map((name, index) => <button key={name} onClick={() => onNavigate("catalog")}><i>{["◈", "◐", "▷", "✦"][index]}</i><span>{name}</span></button>)}</div></section>
-    <section className="home-prompt"><img src={workspaceCover} alt=""/><div><span>РАБОЧЕЕ ПРОСТРАНСТВО В TELEGRAM</span><h2>Найдите исполнителя<br/>для своей задачи</h2><p>Сравните портфолио, договоритесь об условиях и ведите работу в одном месте.</p></div><button onClick={() => onCreate()}>Создать заказ <Icon name="arrow" /></button></section>
-    <section className="home-section"><div className="home-section-title"><div><span>РЕКОМЕНДАЦИИ</span><h2>Новые услуги</h2></div><button onClick={() => onNavigate("catalog")}>Смотреть все</button></div>{featured.length ? <div className="home-service-list">{featured.map((item) => <MiniServiceCard key={item.id} item={item} onClick={() => onNavigate("catalog")} />)}</div> : <div className="home-empty"><Icon name="spark" /><div><b>Каталог только запускается</b><span>Создайте заказ — подходящие исполнители смогут откликнуться.</span></div><button onClick={onCreate}>Создать заказ</button></div>}</section>
-    <section className="home-section home-orders"><div className="home-section-title"><div><span>ДЛЯ ИСПОЛНИТЕЛЕЙ</span><h2>Новые заказы</h2></div><button onClick={() => onNavigate("catalog")}>Все заказы</button></div>{openOrders.length ? openOrders.map((order) => <button className="home-order-row" key={order.id} onClick={() => onNavigate("catalog")}><span>{order.category}</span><b>{order.title}</b><small>до {Number(order.budget || 0).toLocaleString("ru-RU")} ₽ · {order.deadline || "Срок обсуждается"}</small><i><Icon name="arrow" /></i></button>) : <p className="home-muted">Здесь появятся задачи, на которые можно откликнуться.</p>}</section>
-    <p className="home-beta-note">LT Market работает в бета-режиме. Площадка пока не принимает и не хранит оплату за сделки.</p>
-  </section>;
-}
-function CreateSheet({ onClose, onChoose }) { return <div className="create-sheet-backdrop" onMouseDown={onClose}><section className="create-sheet" onMouseDown={(event) => event.stopPropagation()}><div className="sheet-handle"/><button className="create-sheet-close" onClick={onClose}>×</button><span>СОЗДАТЬ</span><h2>Что хотите разместить?</h2><p>Выберите формат — черновик сохранится, пока вы заполняете данные.</p><button onClick={() => onChoose("create-order")}><i><Icon name="briefcase" /></i><div><b>Создать заказ</b><small>Найдите исполнителя под задачу</small></div><Icon name="arrow" /></button><button onClick={() => onChoose("create")}><i><Icon name="grid" /></i><div><b>Создать услугу</b><small>Покажите работу и портфолио</small></div><Icon name="arrow" /></button></section></div>; }
-function Notifications({ onNavigate }) { return <section className="notifications-page"><header><button onClick={() => onNavigate("home")}>←</button><div><span>ЦЕНТР СОБЫТИЙ</span><h1>Уведомления</h1></div></header><div className="notifications-empty"><i><Icon name="bell" size={27}/></i><h2>Пока тихо</h2><p>Здесь появятся важные события: отклики, сообщения, изменения условий и статусы заказов.</p><button onClick={() => onNavigate("catalog")}>Перейти в каталог</button></div></section>; }
-function Guide({ onNavigate }) { return <section className="pro-guide"><button className="pro-back" onClick={() => onNavigate("home")}>← Назад</button><span className="pro-eyebrow">КРАТКИЙ ГИД</span><h1>Три шага до результата</h1><div className="pro-guide-steps">{[["01","Выберите","Откройте каталог услуг или создайте заказ."],["02","Обсудите","Зафиксируйте задачу, стоимость, срок и формат результата."],["03","Завершите","Передайте результат, запросите правки или оставьте отзыв."]].map(([id,title,text]) => <article key={id}><i>{id}</i><div><b>{title}</b><p>{text}</p></div></article>)}</div><button className="pro-primary" onClick={() => onNavigate("catalog")}>Перейти в каталог →</button></section>; }
+const initialTelegramUser = telegram()?.initDataUnsafe?.user || {};
+const initialMe = {
+  authenticated: false,
+  id: initialTelegramUser.id || 0,
+  name: [initialTelegramUser.first_name, initialTelegramUser.last_name].filter(Boolean).join(" ") || "Пользователь LT",
+  username: initialTelegramUser.username || "",
+  photo_url: initialTelegramUser.photo_url || "",
+  is_admin: false,
+  role: "both",
+  unread_notifications: 0,
+};
 
 export default function ProductApp() {
-  const telegramUser = tg()?.initDataUnsafe?.user;
-  const [route, setRoute] = useState("home");
-  const [theme, setTheme] = useState(() => localStorage.getItem("lteam-theme") || "dark");
-  const [profile, setProfile] = useState({ name: [telegramUser?.first_name, telegramUser?.last_name].filter(Boolean).join(" ") || "Пользователь", username: telegramUser?.username ? "@" + telegramUser.username : "LTeam user" });
-  const [listings, setListings] = useState([]), [orders, setOrders] = useState([]), [deals, setDeals] = useState([]), [balance, setBalance] = useState({});
-  const [favorites, setFavorites] = useState(() => JSON.parse(localStorage.getItem("lteam-favorites") || "[]"));
-  const [isAdmin, setIsAdmin] = useState(false), [adminSummary, setAdminSummary] = useState({}), [settings, setSettings] = useState(false), [notice, setNotice] = useState(""), [createSheet, setCreateSheet] = useState(false);
-  const refresh = useCallback(async () => {
-    const [nextListings, nextOrders, nextDeals, nextBalance] = await Promise.all([call("/api/listings"), call("/api/orders"), call("/api/deals"), call("/api/balance")]);
-    setListings(nextListings); setOrders(nextOrders); setDeals(nextDeals); setBalance(nextBalance);
+  const [route, setRoute] = useState({ name: preview?.route || "home", params: {} });
+  const [, setStack] = useState([]);
+  const [me, setMe] = useState(preview?.me || initialMe);
+  const [config, setConfig] = useState(preview?.config || { categories: FALLBACK_CATEGORIES, payments_enabled: false, beta: true });
+  const [listings, setListings] = useState(preview?.listings || []);
+  const [orders, setOrders] = useState(preview?.orders || []);
+  const [deals, setDeals] = useState(preview?.deals || []);
+  const [notifications, setNotifications] = useState(preview?.notifications || []);
+  const [preferences, setPreferences] = useState(preview?.preferences || { role: "both", theme: "system", notifications: { messages: true, orders: true, recommendations: true } });
+  const [loading, setLoading] = useState(!preview);
+  const [toast, setToast] = useState({ message: "", tone: "default" });
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [requestSheet, setRequestSheet] = useState(null);
+  const [detail, setDetail] = useState(null);
+  const [seller, setSeller] = useState(null);
+  const [sellerReviews, setSellerReviews] = useState([]);
+
+  const notify = useCallback((message, tone = "default") => {
+    setToast({ message, tone });
+    window.clearTimeout(window.__ltToastTimer);
+    window.__ltToastTimer = window.setTimeout(() => setToast({ message: "", tone: "default" }), 3600);
   }, []);
+
+  const refresh = useCallback(async () => {
+    const nextMe = await api("/api/me");
+    setMe((current) => ({ ...current, ...nextMe }));
+    if (!nextMe.authenticated) { setLoading(false); return false; }
+    const [nextConfig, nextListings, nextOrders, nextDeals, nextNotifications, nextPreferences] = await Promise.all([
+      api("/api/market/config"), api("/api/listings"), api("/api/orders"), api("/api/deals"), api("/api/notifications"), api("/api/preferences"),
+    ]);
+    setConfig(nextConfig); setListings(nextListings); setOrders(nextOrders); setDeals(nextDeals); setNotifications(nextNotifications); setPreferences(nextPreferences);
+    setMe((current) => ({ ...current, unread_notifications: nextNotifications.filter((item) => !item.is_read).length, role: nextPreferences.role }));
+    setLoading(false);
+    return true;
+  }, []);
+
   useEffect(() => {
-    tg()?.ready?.(); tg()?.expand?.();
-    const bootTimer = window.setTimeout(() => { refresh().catch(() => {}); }, 0);
-    call("/api/me").then((me) => {
-      if (me.authenticated) setProfile((value) => ({ id: me.id, name: me.name || value.name, username: me.username ? "@" + me.username : value.username }));
-      setIsAdmin(Boolean(me.is_admin));
-      if (me.is_admin) call("/api/admin/summary").then(setAdminSummary).catch(() => {});
-    }).catch(() => {});
-    return () => window.clearTimeout(bootTimer);
-  }, [refresh]);
-  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("lteam-theme", theme); }, [theme]);
-  useEffect(() => localStorage.setItem("lteam-favorites", JSON.stringify(favorites)), [favorites]);
-  const request = (path, method, body) => call(path, { method, body: JSON.stringify(body) });
-  const toggleFavorite = (id) => setFavorites((value) => value.includes(id) ? value.filter((entry) => entry !== id) : [...value, id]);
+    if (preview) return;
+    const webApp = telegram();
+    webApp?.ready?.(); webApp?.expand?.();
+    webApp?.setHeaderColor?.("bg_color"); webApp?.setBackgroundColor?.("bg_color"); webApp?.setBottomBarColor?.("bg_color");
+    refresh().catch((error) => { setLoading(false); notify(error.message, "error"); });
+  }, [refresh, notify]);
+
+  useEffect(() => {
+    const webApp = telegram();
+    const applyTheme = () => {
+      const selected = preferences.theme || "system";
+      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      const effective = selected === "system" ? (preview ? systemTheme : (webApp?.colorScheme || systemTheme)) : selected;
+      document.documentElement.dataset.theme = effective;
+      document.documentElement.style.colorScheme = effective;
+    };
+    applyTheme(); webApp?.onEvent?.("themeChanged", applyTheme);
+    return () => webApp?.offEvent?.("themeChanged", applyTheme);
+  }, [preferences.theme]);
+
+  const navigate = useCallback((name, params = {}, replace = false) => {
+    setRoute((current) => {
+      if (!replace) setStack((history) => [...history.slice(-9), current]);
+      return { name, params };
+    });
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }, []);
+
+  const goBack = useCallback(() => {
+    setStack((history) => {
+      const previous = history.at(-1) || { name: "home", params: {} };
+      setRoute(previous);
+      return history.slice(0, -1);
+    });
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }, []);
+
+  useEffect(() => {
+    const back = telegram()?.BackButton;
+    if (!back) return;
+    if (["home", "catalog", "orders", "profile"].includes(route.name)) back.hide(); else back.show();
+    back.onClick(goBack);
+    return () => back.offClick(goBack);
+  }, [route.name, goBack]);
+
+  useEffect(() => {
+    if (route.name !== "listing") { setDetail(null); return; }
+    api(`/api/listings/${route.params.id}`).then(setDetail).catch((error) => { notify(error.message, "error"); goBack(); });
+  }, [route.name, route.params.id, notify, goBack]);
+
+  useEffect(() => {
+    if (route.name !== "seller") { setSeller(null); setSellerReviews([]); return; }
+    Promise.all([api(`/api/users/${route.params.id}/public`), api(`/api/users/${route.params.id}/reviews`)]).then(([nextSeller, nextReviews]) => { setSeller(nextSeller); setSellerReviews(nextReviews); }).catch((error) => { notify(error.message, "error"); goBack(); });
+  }, [route.name, route.params.id, notify, goBack]);
+
+  async function toggleFavorite(item) {
+    const favorite = !item.is_favorite;
+    setListings((current) => current.map((entry) => entry.id === item.id ? { ...entry, is_favorite: favorite } : entry));
+    if (detail?.id === item.id) setDetail((current) => ({ ...current, is_favorite: favorite }));
+    try { await send("/api/favorites", favorite ? "POST" : "DELETE", { listing_id: item.id }); }
+    catch (error) { notify(error.message, "error"); setListings((current) => current.map((entry) => entry.id === item.id ? { ...entry, is_favorite: !favorite } : entry)); }
+  }
+
+  async function savePreferences(next) {
+    try { const saved = await send("/api/preferences", "PUT", next); setPreferences(saved); setMe((current) => ({ ...current, role: saved.role })); setSettingsOpen(false); notify("Настройки сохранены"); }
+    catch (error) { notify(error.message, "error"); }
+  }
+
+  const readAllNotifications = useCallback(async () => {
+    setNotifications((current) => current.map((item) => ({ ...item, is_read: 1 })));
+    setMe((current) => ({ ...current, unread_notifications: 0 }));
+    await send("/api/notifications/read", "POST", {}).catch(() => {});
+  }, []);
+
+  function openNotification(item) {
+    const target = String(item.route || "notifications");
+    if (target.startsWith("deal:")) navigate("deal", { id: Number(target.split(":")[1]) });
+    else if (target.startsWith("profile:")) navigate("seller", { id: Number(target.split(":")[1]) });
+    else if (["home", "catalog", "orders", "profile", "support"].includes(target)) navigate(target);
+    else navigate("orders");
+  }
+
+  if (loading) return <main className="market-app"><Loading/></main>;
+  if (!me.authenticated) return <main className="market-app"><section className="telegram-gate"><Brand/><div className="gate-visual"><span><Icon name="shield" size={34}/></span><i/><i/></div><small>TELEGRAM MINI APP</small><h1>Откройте LT Market<br/>в Telegram</h1><p>Профиль, публикации и заказы доступны после безопасной авторизации через бота.</p><a className="primary-button" href="https://t.me/lteam_marketbot?startapp=market">Открыть в Telegram <Icon name="arrow"/></a></section></main>;
+
+  const categories = config.categories?.length ? config.categories : FALLBACK_CATEGORIES;
+  const selectedDeal = route.name === "deal" ? deals.find((item) => Number(item.id) === Number(route.params.id)) : null;
+  const selectedOrder = route.name === "order" ? orders.find((item) => Number(item.id) === Number(route.params.id)) : null;
+  const favorites = listings.filter((item) => item.is_favorite);
   let content;
-  if (route === "home") content = <Home profile={profile} listings={listings} orders={orders} onNavigate={setRoute} isAdmin={isAdmin} onCreate={() => setCreateSheet(true)} />;
-  else if (route === "guide") content = <Guide onNavigate={setRoute} />;
-  else if (route === "notifications") content = <Notifications onNavigate={setRoute} />;
-  else if (route === "catalog") content = <CatalogV3 items={listings} orders={orders} favorites={favorites} onFavorite={toggleFavorite} onNavigate={setRoute} request={request} fetchData={call} />;
-  else if (route === "orders") content = <OrdersWorkspace orders={orders} deals={deals} profile={profile} fetchData={call} request={request} onNavigate={setRoute} onChat={() => setNotice("Чаты открываются из карточки сделки.")} onDealsChanged={setDeals} />;
-  else if (route === "create-order") content = <OrderComposer initial={{ title: "", category: "Telegram-боты и Mini Apps", budget: "", deadline: "По договорённости", description: "" }} onClose={() => setRoute("orders")} message={notice} onSubmit={async (form, reset) => { try { await request("/api/orders", "POST", form); reset(); setNotice("Заказ отправлен на модерацию."); refresh(); } catch (error) { setNotice(error.message); } }} />;
-  else if (route === "create") content = <ListingComposer initial={{ title: "", category: "Дизайн Telegram", price: "", delivery_time: "По договорённости", description: "", image_data: "", portfolio_data: [] }} message={notice} onSubmit={async (form, reset) => { try { await request("/api/listings", "POST", form); reset(); setNotice("Услуга отправлена на модерацию."); refresh(); setRoute("my-listings"); } catch (error) { setNotice(error.message); } }} />;
-  else if (route === "profile") content = <ProfileWorkspace profile={profile} listings={listings} orders={orders} deals={deals} balance={balance} isSynced isAdmin={isAdmin} onNavigate={setRoute} onSettings={() => setSettings(true)} />;
-  else if (route === "wallet") content = <WalletWorkspace balance={balance} fetchData={call} onNavigate={setRoute} onWithdraw={() => tg()?.sendData?.("withdraw_start")} />;
-  else if (route === "my-listings") content = <MyListingsWorkspace fetchData={call} request={request} onNavigate={setRoute} onOpenDeal={() => { refresh(); setRoute("orders"); }} />;
-  else if (route === "favorites") content = <FavoritesWorkspace items={listings} favorites={favorites} onToggle={toggleFavorite} onNavigate={setRoute} />;
-  else if (route === "support") content = <SupportWorkspace fetchData={call} request={request} onNavigate={setRoute} />;
-  else if (route === "admin" && isAdmin) content = <AdminWorkspace summary={adminSummary} fetchData={call} request={request} onNavigate={setRoute} onOpenBot={(section) => tg()?.sendData?.(section || "admin_panel")} />;
-  else content = <Home profile={profile} listings={listings} orders={orders} onNavigate={setRoute} isAdmin={isAdmin} onCreate={() => setCreateSheet(true)} />;
-  return <main className="product-app">{content}{route !== "guide" && <ProductNav active={route} onNavigate={setRoute} onCreate={() => setCreateSheet(true)} />}{createSheet && <CreateSheet onClose={() => setCreateSheet(false)} onChoose={(nextRoute) => { setCreateSheet(false); setRoute(nextRoute); }} />}{settings && <SettingsWorkspace theme={theme} setTheme={setTheme} onClose={() => setSettings(false)} />}{notice && <button className="pro-notice" onClick={() => setNotice("")}>{notice}<i>×</i></button>}</main>;
+  if (route.name === "home") content = <HomeScreen me={me} categories={categories} listings={listings} orders={orders} onNavigate={navigate} onCreate={(type) => navigate("create", { type })} onFavorite={toggleFavorite}/>;
+  else if (route.name === "catalog") content = <CatalogScreen listings={listings} orders={orders} categories={categories} initial={route.params} onNavigate={navigate} onFavorite={toggleFavorite}/>;
+  else if (route.name === "listing") content = <ListingDetail item={detail} loading={!detail} onBack={goBack} onSeller={() => navigate("seller", { id: detail.seller_id })} onFavorite={toggleFavorite} onRequest={(selectedPackage) => setRequestSheet({ type: "listing", item: detail, selectedPackage })}/>;
+  else if (route.name === "order") content = <OrderDetail item={selectedOrder} onBack={goBack} onApply={() => setRequestSheet({ type: "order", item: selectedOrder })}/>;
+  else if (route.name === "create") content = <CreateScreen initialType={route.params.type || ""} categories={categories} onBack={goBack} notify={notify} onDone={async () => { await refresh(); navigate("orders", { tab: "published" }, true); }}/>;
+  else if (route.name === "orders") content = <OrdersScreen me={me} deals={deals} orders={orders} onNavigate={navigate} notify={notify} refresh={refresh}/>;
+  else if (route.name === "deal") content = selectedDeal ? <DealWorkspace me={me} deal={selectedDeal} onBack={goBack} notify={notify} onRefresh={refresh}/> : <section className="screen"><Loading label="Открываем заказ"/></section>;
+  else if (route.name === "profile") content = <ProfileScreen me={me} listings={listings} orders={orders} deals={deals} onNavigate={navigate} onSettings={() => setSettingsOpen(true)}/>;
+  else if (route.name === "seller") content = <SellerProfileScreen profile={seller} reviews={sellerReviews} onBack={goBack} onListing={(id) => navigate("listing", { id })} onFavorite={toggleFavorite}/>;
+  else if (route.name === "notifications") content = <NotificationsScreen items={notifications} onBack={goBack} onOpen={openNotification} onReadAll={readAllNotifications}/>;
+  else if (route.name === "favorites") content = <section className="screen favorites-screen"><header className="simple-head"><button onClick={goBack}><Icon name="back"/></button><div><small>СОХРАНЁННОЕ</small><h1>Избранное</h1></div></header>{favorites.length ? <div className="catalog-grid">{favorites.map((item) => <ServiceCard key={item.id} item={item} onOpen={() => navigate("listing", { id: item.id })} onFavorite={toggleFavorite}/>)}</div> : <EmptyState icon="heart" title="В избранном пусто" text="Сохраняйте интересные услуги, чтобы быстро вернуться к ним." action="Открыть каталог" onAction={() => navigate("catalog")}/>}</section>;
+  else if (route.name === "guide") content = <GuideScreen onBack={goBack} onCatalog={() => navigate("catalog")}/>;
+  else if (route.name === "legal") content = <LegalScreen onBack={goBack} onSupport={() => navigate("support")}/>;
+  else if (route.name === "support") content = <SupportScreen onBack={goBack} notify={notify}/>;
+  else if (route.name === "admin" && me.is_admin) content = <AdminScreen onBack={goBack} notify={notify}/>;
+  else content = <HomeScreen me={me} categories={categories} listings={listings} orders={orders} onNavigate={navigate} onCreate={() => navigate("create")} onFavorite={toggleFavorite}/>;
+
+  const navActive = route.name === "listing" || route.name === "order" ? "catalog" : route.name === "deal" ? "orders" : route.name === "seller" ? "profile" : route.name;
+  const showNav = ["home", "catalog", "orders", "profile"].includes(route.name);
+  return <main className="market-app">{content}{showNav && <BottomNav active={navActive} onNavigate={navigate} onCreate={() => navigate("create")}/>}<RequestSheet data={requestSheet} onClose={() => setRequestSheet(null)} notify={notify} onDone={async () => { setRequestSheet(null); await refresh(); navigate("orders"); }}/><SettingsSheet open={settingsOpen} preferences={preferences} onClose={() => setSettingsOpen(false)} onSave={savePreferences}/><Toast message={toast.message} tone={toast.tone} onClose={() => setToast({ message: "", tone: "default" })}/></main>;
+}
+
+function RequestSheet({ data, onClose, notify, onDone }) {
+  const [form, setForm] = useState({ message: "", price: "", deadline: "По договорённости" });
+  useEffect(() => { if (data) setForm({ message: data.type === "listing" ? `Здравствуйте! Хочу обсудить тариф «${data.selectedPackage?.title || "Базовый"}». ` : "", price: data.item?.budget || "", deadline: data.item?.deadline || "По договорённости" }); }, [data]);
+  if (!data) return null;
+  const submit = async () => { try { if (data.type === "listing") await send(`/api/listings/${data.item.id}/requests`, "POST", { message: form.message, package_key: data.selectedPackage?.package_key }); else await send(`/api/orders/${data.item.id}/applications`, "POST", { comment: form.message, price: Number(form.price), deadline: form.deadline }); notify(data.type === "listing" ? "Запрос отправлен исполнителю" : "Отклик отправлен заказчику"); onDone(); } catch (error) { notify(error.message, "error"); } };
+  return <Sheet open title={data.type === "listing" ? "Обсудить услугу" : "Откликнуться на задачу"} onClose={onClose}><div className="request-form">{data.type === "order" && <div className="request-conditions"><label className="field"><span>Ваша цена, ₽</span><input type="number" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })}/></label><label className="field"><span>Срок</span><input value={form.deadline} onChange={(event) => setForm({ ...form, deadline: event.target.value })}/></label></div>}<label className="field"><span>{data.type === "listing" ? "Опишите задачу" : "Ваше предложение"}</span><textarea value={form.message} minLength={10} onChange={(event) => setForm({ ...form, message: event.target.value })} placeholder="Коротко расскажите о задаче, опыте и важных деталях"/></label><p><Icon name="shield" size={17}/> Контакты и условия лучше обсуждать внутри заказа — так история сохранится.</p><button className="primary-button wide" disabled={form.message.trim().length < 10 || (data.type === "order" && !Number(form.price))} onClick={submit}>{data.type === "listing" ? "Отправить запрос" : "Отправить отклик"}</button></div></Sheet>;
 }

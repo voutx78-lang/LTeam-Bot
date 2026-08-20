@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+*.db
+*.db-shm
+*.db-wal
+Web/node_modules/
+Web/edge-*/
+Web/preview-*.png
+Web/qa-*.png
+Web/final-*.png
+Web/vite-preview*.log
+Web/preview-final.log
+.pytest_cache/

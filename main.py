@@ -27,6 +27,7 @@ from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from app.storage import SQLiteStorage
+from app.runtime_diagnostics import record_update_error
 from app.states import (
     AdminBanState, AdminMessageState, AdminMuteState, AdminReasonState,
     AdminRoleState, AdminSearchUserState, AdminUnbanState, AdminUserPickState,
@@ -13406,6 +13407,7 @@ async def handle_unexpected_update_error(event: ErrorEvent) -> bool:
     """Keep a single failed user action from leaving the bot silent or stopping polling."""
     update = event.update
     error_name = type(event.exception).__name__
+    error_reference = record_update_error(event.exception, update)
     print(f"[LTeam] update handled safely after {error_name}: {event.exception}")
     traceback.print_exception(type(event.exception), event.exception, event.exception.__traceback__)
 
@@ -13417,8 +13419,10 @@ async def handle_unexpected_update_error(event: ErrorEvent) -> bool:
             )
         elif update.message:
             await update.message.answer(
-                "Не получилось выполнить действие. Вернитесь в меню и попробуйте ещё раз.",
+                "Не получилось выполнить действие. Вернитесь в меню и попробуйте ещё раз.\n"
+                f"Код ошибки: <code>{error_reference}</code>",
                 reply_markup=main_menu(update.message.from_user.id),
+                parse_mode="HTML",
             )
     except Exception:
         # The original error is already printed above; never re-raise from the recovery path.

@@ -19,6 +19,7 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 from app.database import db as shared_db
 from app.events import create_event
+from app.runtime_diagnostics import recent_update_errors
 from app.market_policy import ALLOWED_CATEGORIES, MARKETPLACE_BETA, PAYMENTS_ENABLED, normalize_category, validate_category, validate_market_text
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_IDS = {int(value.strip()) for value in os.getenv("ADMIN_IDS", "").split(",") if value.strip().isdigit()}
@@ -173,12 +174,20 @@ def health_check():
         return jsonify({
             "ok": True,
             "product": "LT Market",
-        "version": "2026.08-start-fix",
+        "version": "2026.08-start-diagnostics",
             "payments_enabled": PAYMENTS_ENABLED,
             "storage": "cloud_snapshot" if os.getenv("DATABASE_URL") else "local",
         })
     except Exception:
         return jsonify({"ok": False}), 503
+
+
+@app.get("/api/admin/runtime-errors")
+def admin_runtime_errors():
+    """Return recent bot failures only to a signed administrator."""
+    if not require_admin_id():
+        return jsonify({"error": "forbidden"}), 403
+    return jsonify({"errors": recent_update_errors()})
 
 
 def require_user() -> int:

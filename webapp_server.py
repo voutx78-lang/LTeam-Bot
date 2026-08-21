@@ -174,7 +174,7 @@ def health_check():
         return jsonify({
             "ok": True,
             "product": "LT Market",
-        "version": "2026.08-start-diagnostics",
+        "version": "2026.08-fsm-compat",
             "payments_enabled": PAYMENTS_ENABLED,
             "storage": "cloud_snapshot" if os.getenv("DATABASE_URL") else "local",
         })

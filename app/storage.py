@@ -12,9 +12,16 @@ from app.database import db
 
 
 def _key(value: StorageKey) -> str:
+    # aiogram added business_connection_id to StorageKey after the version
+    # currently installed by Render.  getattr keeps persisted FSM compatible
+    # with both the production and local runtimes.
     return ":".join(str(part or "") for part in (
-        value.bot_id, value.chat_id, value.user_id, value.thread_id,
-        value.business_connection_id, value.destiny,
+        value.bot_id,
+        value.chat_id,
+        value.user_id,
+        getattr(value, "thread_id", None),
+        getattr(value, "business_connection_id", None),
+        getattr(value, "destiny", "default"),
     ))
 
 

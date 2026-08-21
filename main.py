@@ -13895,9 +13895,13 @@ def lteam_reply_menu(user_id: int | None = None) -> ReplyKeyboardMarkup:
         market_button = KeyboardButton(text=BOT_NAV_MARKET, web_app=WebAppInfo(url=WEBAPP_URL))
     rows = [
         [market_button],
-        [KeyboardButton(text=BOT_NAV_ORDERS), KeyboardButton(text=BOT_NAV_PROFILE)],
-        [KeyboardButton(text=BOT_NAV_SUPPORT), KeyboardButton(text=BOT_NAV_MENU)],
+        [KeyboardButton(text="🔎 Каталог услуг"), KeyboardButton(text="🧾 Заказы")],
+        [KeyboardButton(text="📦 Разместить"), KeyboardButton(text="👤 Профиль")],
+        [KeyboardButton(text=BOT_NAV_SUPPORT), KeyboardButton(text="🛡 Гарант")],
+        [KeyboardButton(text="⚙️ Меню")],
     ]
+    if is_channel_configured():
+        rows.append([KeyboardButton(text="📢 Канал LTeam")])
     if user_id and is_staff(user_id):
         rows.append([KeyboardButton(text=BOT_NAV_ADMIN)])
     return ReplyKeyboardMarkup(
@@ -13915,10 +13919,17 @@ def main_menu(user_id: int | None = None) -> InlineKeyboardMarkup:
             web_app=WebAppInfo(url=WEBAPP_URL),
         )])
     rows.extend([
-        [InlineKeyboardButton(text="Мои заказы", callback_data="my_deals"),
-         InlineKeyboardButton(text="Поддержка", callback_data="support")],
-        [InlineKeyboardButton(text="Как работает площадка", callback_data="rules")],
+        [InlineKeyboardButton(text="🔎 Каталог услуг", callback_data="market")],
+        [InlineKeyboardButton(text="📦 Разместить услугу", callback_data="create_listing"),
+         InlineKeyboardButton(text="🧾 Создать заказ", callback_data="create_order")],
+        [InlineKeyboardButton(text="📋 Мои объявления", callback_data="my_listings"),
+         InlineKeyboardButton(text="💬 Мои сделки", callback_data="my_deals")],
+        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
+         InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")],
+        [InlineKeyboardButton(text="🛡 Как работает площадка", callback_data="guarantee"),
+         InlineKeyboardButton(text="📜 Правила", callback_data="rules")],
     ])
+    add_channel_button(rows, "📢 Канал LTeam")
     if user_id and is_staff(user_id):
         rows.append([InlineKeyboardButton(text="🛠 Центр управления", callback_data="admin_panel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)

@@ -126,9 +126,18 @@ def get_user() -> dict:
     if not received_hash or not hmac.compare_digest(expected_hash, received_hash):
         return {}
     try:
-        return json.loads(values.get("user", "{}"))
+        user = json.loads(values.get("user", "{}"))
     except json.JSONDecodeError:
         return {}
+    try:
+        user_id = int(user.get("id", 0))
+        if user_id and user_id not in STAFF_ADMIN_IDS:
+            with db() as connection:
+                if connection.execute("SELECT 1 FROM banned_users WHERE user_id=?", (user_id,)).fetchone():
+                    return {}
+    except Exception:
+        pass
+    return user
 
 
 def db() -> sqlite3.Connection:
@@ -142,6 +151,19 @@ def current_user_id() -> int | None:
     return int(user["id"]) if user.get("id") else None
 
 
+def require_admin_id() -> int | None:
+    """Return the signed-in administrator id without trusting client flags."""
+    user_id = current_user_id()
+    return user_id if user_id in STAFF_ADMIN_IDS else None
+
+
+def log_admin_action(connection: sqlite3.Connection, actor_id: int, action: str, target_id: int | None = None, details: str = "") -> None:
+    connection.execute(
+        "INSERT INTO admin_action_logs(actor_id, target_id, action, details, created_at) VALUES (?, ?, ?, ?, ?)",
+        (actor_id, target_id, action, details[:1000], datetime.now().isoformat()),
+    )
+
+
 @app.get("/api/health")
 def health_check():
     """Small non-sensitive readiness check for Render and future monitoring."""
@@ -151,7 +173,7 @@ def health_check():
         return jsonify({
             "ok": True,
             "product": "LT Market",
-            "version": "2026.08-professional",
+            "version": "2026.08-admin",
             "payments_enabled": PAYMENTS_ENABLED,
             "storage": "cloud_snapshot" if os.getenv("DATABASE_URL") else "local",
         })
@@ -177,22 +199,30 @@ def me():
     with db() as connection:
         connection.execute("""INSERT INTO users(user_id, username, created_at, display_name, first_name, last_name)
             VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET username=excluded.username, display_name=excluded.display_name,
+            ON CONFLICT(user_id) DO UPDATE SET username=excluded.username,
+            display_name=CASE WHEN COALESCE(users.display_name, '')='' THEN excluded.display_name ELSE users.display_name END,
             first_name=excluded.first_name, last_name=excluded.last_name""",
             (user_id, user.get("username", ""), now, name, user.get("first_name", ""), user.get("last_name", "")))
         preference = connection.execute("SELECT market_role, theme, notification_settings FROM user_preferences WHERE user_id=?", (user_id,)).fetchone()
+        profile = connection.execute("SELECT COALESCE(display_name, '') AS display_name, COALESCE(bio, '') AS bio, COALESCE(skills_json, '[]') AS skills_json FROM users WHERE user_id=?", (user_id,)).fetchone()
         unread = connection.execute("SELECT COUNT(*) FROM notification_events WHERE user_id=? AND is_read=0", (user_id,)).fetchone()[0]
         connection.commit()
+    try:
+        profile_skills = json.loads(profile["skills_json"] or "[]") if profile else []
+    except (TypeError, json.JSONDecodeError):
+        profile_skills = []
     return jsonify({
         "authenticated": True,
         "id": user_id,
-        "name": name,
+        "name": (profile["display_name"] if profile and profile["display_name"] else name),
         "username": user.get("username", ""),
         "photo_url": user.get("photo_url", "") or avatar_endpoint(user_id),
         "is_admin": user_id in STAFF_ADMIN_IDS,
         "role": preference["market_role"] if preference else "both",
         "theme": preference["theme"] if preference else "system",
         "unread_notifications": int(unread or 0),
+        "bio": profile["bio"] if profile else "",
+        "skills": profile_skills,
     })
 
 
@@ -211,20 +241,35 @@ def preferences_api():
             settings = payload.get("notifications", {})
             if not isinstance(settings, dict):
                 settings = {}
-            connection.execute("""INSERT INTO user_preferences(user_id, market_role, theme, notification_settings, updated_at)
-                VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET market_role=excluded.market_role,
-                theme=excluded.theme, notification_settings=excluded.notification_settings, updated_at=excluded.updated_at""",
-                (user_id, role, theme, json.dumps(settings, ensure_ascii=False), datetime.now().isoformat()))
+            display = payload.get("display", {})
+            if not isinstance(display, dict):
+                display = {}
+            display = {
+                "animations": display.get("animations", True) is not False,
+                "haptics": display.get("haptics", True) is not False,
+                "compact_cards": bool(display.get("compact_cards", False)),
+                "language": "ru",
+            }
+            connection.execute("""INSERT INTO user_preferences(user_id, market_role, theme, notification_settings, display_settings, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET market_role=excluded.market_role,
+                theme=excluded.theme, notification_settings=excluded.notification_settings,
+                display_settings=excluded.display_settings, updated_at=excluded.updated_at""",
+                (user_id, role, theme, json.dumps(settings, ensure_ascii=False), json.dumps(display, ensure_ascii=False), datetime.now().isoformat()))
             connection.execute("UPDATE users SET market_role=? WHERE user_id=?", (role, user_id))
             connection.commit()
-        row = connection.execute("SELECT market_role, theme, notification_settings FROM user_preferences WHERE user_id=?", (user_id,)).fetchone()
+        row = connection.execute("SELECT market_role, theme, notification_settings, display_settings FROM user_preferences WHERE user_id=?", (user_id,)).fetchone()
     if not row:
-        return jsonify({"role": "both", "theme": "system", "notifications": {"messages": True, "orders": True, "recommendations": True}})
+        return jsonify({"role": "both", "theme": "system", "notifications": {"messages": True, "orders": True, "recommendations": True}, "display": {"animations": True, "haptics": True, "compact_cards": False, "language": "ru"}})
     try:
         settings = json.loads(row["notification_settings"] or "{}")
     except json.JSONDecodeError:
         settings = {}
-    return jsonify({"role": row["market_role"], "theme": row["theme"], "notifications": settings})
+    try:
+        display = json.loads(row["display_settings"] or "{}")
+    except json.JSONDecodeError:
+        display = {}
+    display = {"animations": display.get("animations", True) is not False, "haptics": display.get("haptics", True) is not False, "compact_cards": bool(display.get("compact_cards", False)), "language": "ru"}
+    return jsonify({"role": row["market_role"], "theme": row["theme"], "notifications": settings, "display": display})
 
 
 @app.get("/api/notifications")
@@ -436,7 +481,7 @@ def order_reference(order_id: int):
 def user_avatar(user_id: int):
     """Return a Telegram profile image without exposing the bot token to MiniApp clients."""
     if not BOT_TOKEN:
-        return "", 404
+        return "", 204
     cached = AVATAR_CACHE.get(user_id)
     if cached and cached[0] > time.time():
         return send_file(BytesIO(cached[1]), mimetype=cached[2], max_age=3600)
@@ -444,15 +489,15 @@ def user_avatar(user_id: int):
         photos = json.loads(urlopen(f"https://api.telegram.org/bot{BOT_TOKEN}/getUserProfilePhotos?user_id={user_id}&limit=1", timeout=6).read())
         entries = photos.get("result", {}).get("photos", [])
         if not entries:
-            return "", 404
+            return "", 204
         file_id = entries[0][-1]["file_id"]
         file_info = json.loads(urlopen(f"https://api.telegram.org/bot{BOT_TOKEN}/getFile?file_id={file_id}", timeout=6).read())
         path = file_info.get("result", {}).get("file_path")
         if not path:
-            return "", 404
+            return "", 204
         data = urlopen(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{path}", timeout=8).read()
     except Exception:
-        return "", 404
+        return "", 204
     AVATAR_CACHE[user_id] = (time.time() + 3600, data, "image/jpeg")
     return send_file(BytesIO(data), mimetype="image/jpeg", max_age=3600)
 
@@ -1154,7 +1199,7 @@ def public_profile(user_id: int):
     except json.JSONDecodeError:
         data["skills"] = []
     level = "Лучший исполнитель" if completed >= 25 and float(stats["rating"] or 0) >= 4.8 else "Надёжный исполнитель" if completed >= 10 else "Активный исполнитель" if completed >= 3 else "Новый исполнитель"
-    return jsonify({"id": user_id, **data, **dict(stats), "completed_orders": int(completed), "level": level, "avatar_url": avatar_endpoint(user_id), "listings": listing_data})
+    return jsonify({"id": user_id, **data, **dict(stats), "completed_orders": int(completed), "level": level, "avatar_url": avatar_endpoint(user_id), "is_admin": user_id in STAFF_ADMIN_IDS, "listings": listing_data})
 
 
 @app.put("/api/profile")
@@ -1175,6 +1220,17 @@ def update_profile_api():
         connection.execute("UPDATE users SET display_name=?, bio=?, skills_json=? WHERE user_id=?", (display_name, bio, json.dumps(skills, ensure_ascii=False), user_id))
         connection.commit()
     return jsonify({"ok": True, "display_name": display_name, "bio": bio, "skills": skills})
+
+
+@app.delete("/api/recently-viewed")
+def clear_recently_viewed_api():
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    with db() as connection:
+        connection.execute("DELETE FROM recently_viewed WHERE user_id=?", (user_id,))
+        connection.commit()
+    return jsonify({"ok": True})
 
 
 @app.get("/api/users/<int:user_id>/reviews")
@@ -1275,7 +1331,7 @@ def create_review(deal_id: int):
 
 @app.get("/api/admin/summary")
 def admin_summary():
-    if int(get_user().get("id", 0)) not in STAFF_ADMIN_IDS:
+    if not require_admin_id():
         return jsonify({"error": "forbidden"}), 403
     with db() as connection:
         payments = connection.execute("SELECT COUNT(*) FROM deals WHERE status IN ('waiting_admin_payment_approval','waiting_admin_confirm')").fetchone()[0] if PAYMENTS_ENABLED else 0
@@ -1283,29 +1339,158 @@ def admin_summary():
         payouts = connection.execute("SELECT COUNT(*) FROM withdrawal_requests WHERE status='pending'").fetchone()[0] if PAYMENTS_ENABLED else 0
         moderation = connection.execute("SELECT (SELECT COUNT(*) FROM listings WHERE status IN ('pending','moderation')) + (SELECT COUNT(*) FROM orders WHERE status='moderation')").fetchone()[0]
         tickets = connection.execute("SELECT COUNT(*) FROM tickets WHERE status IN ('open', 'answered')").fetchone()[0]
-    return jsonify({"payments": payments, "disputes": disputes, "payouts": payouts, "moderation": moderation, "tickets": tickets})
+        users = connection.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        active_listings = connection.execute("SELECT COUNT(*) FROM listings WHERE status='active'").fetchone()[0]
+        active_orders = connection.execute("SELECT COUNT(*) FROM orders WHERE status='active'").fetchone()[0]
+        completed = connection.execute("SELECT COUNT(*) FROM deals WHERE status='completed'").fetchone()[0]
+        reports = connection.execute("SELECT COUNT(*) FROM reports WHERE COALESCE(status, 'new')='new'").fetchone()[0]
+    return jsonify({"payments": payments, "disputes": disputes, "payouts": payouts, "moderation": moderation, "tickets": tickets, "users": users, "active_listings": active_listings, "active_orders": active_orders, "completed": completed, "reports": reports})
+
+
+@app.get("/api/admin/analytics")
+def admin_analytics():
+    if not require_admin_id():
+        return jsonify({"error": "forbidden"}), 403
+    with db() as connection:
+        totals = {
+            "users": connection.execute("SELECT COUNT(*) FROM users").fetchone()[0],
+            "listings": connection.execute("SELECT COUNT(*) FROM listings").fetchone()[0],
+            "orders": connection.execute("SELECT COUNT(*) FROM orders").fetchone()[0],
+            "deals": connection.execute("SELECT COUNT(*) FROM deals").fetchone()[0],
+            "completed": connection.execute("SELECT COUNT(*) FROM deals WHERE status='completed'").fetchone()[0],
+            "reviews": connection.execute("SELECT COUNT(*) FROM reviews").fetchone()[0],
+        }
+        days = connection.execute("""WITH RECURSIVE dates(day) AS (
+            SELECT date('now', '-6 day') UNION ALL SELECT date(day, '+1 day') FROM dates WHERE day < date('now')
+        ) SELECT day,
+            (SELECT COUNT(*) FROM users WHERE substr(created_at,1,10)=day) AS users,
+            (SELECT COUNT(*) FROM listings WHERE substr(created_at,1,10)=day) AS listings,
+            (SELECT COUNT(*) FROM orders WHERE substr(created_at,1,10)=day) AS orders,
+            (SELECT COUNT(*) FROM deals WHERE substr(created_at,1,10)=day) AS deals
+            FROM dates ORDER BY day""").fetchall()
+    totals["completion_rate"] = round((totals["completed"] / totals["deals"] * 100), 1) if totals["deals"] else 0
+    return jsonify({"totals": totals, "days": [dict(row) for row in days]})
+
+
+@app.get("/api/admin/users")
+def admin_users():
+    if not require_admin_id():
+        return jsonify({"error": "forbidden"}), 403
+    query = str(request.args.get("query", "")).strip()[:80]
+    status = str(request.args.get("status", "all"))
+    where, params = [], []
+    if query:
+        where.append("(CAST(u.user_id AS TEXT) LIKE ? OR COALESCE(u.username,'') LIKE ? OR COALESCE(u.display_name,'') LIKE ?)")
+        token = f"%{query}%"
+        params.extend([token, token, token])
+    if status == "banned":
+        where.append("b.user_id IS NOT NULL")
+    elif status == "active":
+        where.append("b.user_id IS NULL")
+    clause = f"WHERE {' AND '.join(where)}" if where else ""
+    with db() as connection:
+        rows = connection.execute(f"""SELECT u.user_id,
+            COALESCE(NULLIF(u.display_name,''), NULLIF(u.username,''), 'Пользователь LT') AS display_name,
+            COALESCE(u.username,'') AS username, COALESCE(u.verified,0) AS verified, u.created_at,
+            CASE WHEN b.user_id IS NULL THEN 0 ELSE 1 END AS banned,
+            COALESCE(b.reason,'') AS ban_reason,
+            (SELECT COUNT(*) FROM listings l WHERE l.seller_id=u.user_id) AS listings_count,
+            (SELECT COUNT(*) FROM orders o WHERE o.customer_id=u.user_id) AS orders_count,
+            (SELECT COUNT(*) FROM deals d WHERE (d.buyer_id=u.user_id OR d.seller_id=u.user_id) AND d.status='completed') AS completed_count,
+            (SELECT COUNT(*) FROM admin_warnings w WHERE w.user_id=u.user_id) AS warnings_count
+            FROM users u LEFT JOIN banned_users b ON b.user_id=u.user_id {clause}
+            ORDER BY u.created_at DESC LIMIT 80""", params).fetchall()
+    return jsonify([{**dict(row), "avatar_url": avatar_endpoint(int(row["user_id"])), "is_admin": int(row["user_id"]) in STAFF_ADMIN_IDS} for row in rows])
+
+
+@app.get("/api/admin/users/<int:target_id>")
+def admin_user_detail(target_id: int):
+    if not require_admin_id():
+        return jsonify({"error": "forbidden"}), 403
+    with db() as connection:
+        row = connection.execute("""SELECT u.user_id,
+            COALESCE(NULLIF(u.display_name,''), NULLIF(u.username,''), 'Пользователь LT') AS display_name,
+            COALESCE(u.username,'') AS username, COALESCE(u.bio,'') AS bio, COALESCE(u.verified,0) AS verified,
+            COALESCE(u.market_role,'both') AS market_role, u.created_at,
+            CASE WHEN b.user_id IS NULL THEN 0 ELSE 1 END AS banned, COALESCE(b.reason,'') AS ban_reason,
+            (SELECT COUNT(*) FROM listings l WHERE l.seller_id=u.user_id) AS listings_count,
+            (SELECT COUNT(*) FROM orders o WHERE o.customer_id=u.user_id) AS orders_count,
+            (SELECT COUNT(*) FROM deals d WHERE d.buyer_id=u.user_id OR d.seller_id=u.user_id) AS deals_count,
+            (SELECT COUNT(*) FROM deals d WHERE (d.buyer_id=u.user_id OR d.seller_id=u.user_id) AND d.status='completed') AS completed_count,
+            (SELECT COUNT(*) FROM reports r WHERE r.user_id=u.user_id OR r.target_id=u.user_id) AS reports_count,
+            (SELECT COUNT(*) FROM admin_warnings w WHERE w.user_id=u.user_id) AS warnings_count
+            FROM users u LEFT JOIN banned_users b ON b.user_id=u.user_id WHERE u.user_id=?""", (target_id,)).fetchone()
+        warnings = connection.execute("SELECT id, reason, created_at FROM admin_warnings WHERE user_id=? ORDER BY id DESC LIMIT 10", (target_id,)).fetchall()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    return jsonify({**dict(row), "avatar_url": avatar_endpoint(target_id), "is_admin": target_id in STAFF_ADMIN_IDS, "warnings": [dict(item) for item in warnings]})
+
+
+@app.post("/api/admin/users/<int:target_id>/action")
+def admin_user_action(target_id: int):
+    admin_id = require_admin_id()
+    if not admin_id:
+        return jsonify({"error": "forbidden"}), 403
+    if target_id in STAFF_ADMIN_IDS:
+        return jsonify({"error": "protected", "message": "Нельзя применять санкции к владельцу или администратору."}), 403
+    payload = request.get_json(silent=True) or {}
+    action = str(payload.get("action", "")).lower()
+    reason = str(payload.get("reason", "")).strip()[:500]
+    if action not in {"warn", "ban", "unban"}:
+        return jsonify({"error": "validation", "message": "Неизвестное действие."}), 400
+    if action in {"warn", "ban"} and len(reason) < 5:
+        return jsonify({"error": "validation", "message": "Укажите понятную причину минимум из 5 символов."}), 400
+    with db() as connection:
+        if not connection.execute("SELECT 1 FROM users WHERE user_id=?", (target_id,)).fetchone():
+            return jsonify({"error": "not_found"}), 404
+        if action == "warn":
+            connection.execute("INSERT INTO admin_warnings(user_id, admin_id, reason, created_at) VALUES (?, ?, ?, ?)", (target_id, admin_id, reason, datetime.now().isoformat()))
+        elif action == "ban":
+            connection.execute("INSERT OR REPLACE INTO banned_users(user_id, reason, banned_by, created_at) VALUES (?, ?, ?, ?)", (target_id, reason, admin_id, datetime.now().isoformat()))
+        else:
+            connection.execute("DELETE FROM banned_users WHERE user_id=?", (target_id,))
+        log_admin_action(connection, admin_id, f"miniapp_{action}", target_id, reason or "Блокировка снята")
+        connection.commit()
+    message = {"warn": f"Администратор LT Market вынес предупреждение: {reason}", "ban": f"Доступ к LT Market ограничен. Причина: {reason}", "unban": "Доступ к LT Market восстановлен."}[action]
+    notify_user(target_id, message, event_type="system", title="Решение администрации", route="support")
+    return jsonify({"ok": True, "action": action})
+
+
+@app.get("/api/admin/audit")
+def admin_audit():
+    if not require_admin_id():
+        return jsonify({"error": "forbidden"}), 403
+    with db() as connection:
+        rows = connection.execute("""SELECT a.id, a.actor_id, a.target_id, a.action, COALESCE(a.details,'') AS details, a.created_at,
+            COALESCE(NULLIF(actor.display_name,''), NULLIF(actor.username,''), CAST(a.actor_id AS TEXT)) AS actor_name,
+            COALESCE(NULLIF(target.display_name,''), NULLIF(target.username,''), CAST(a.target_id AS TEXT), '—') AS target_name
+            FROM admin_action_logs a LEFT JOIN users actor ON actor.user_id=a.actor_id
+            LEFT JOIN users target ON target.user_id=a.target_id ORDER BY a.id DESC LIMIT 100""").fetchall()
+    return jsonify([dict(row) for row in rows])
 
 
 @app.get("/api/admin/moderation")
 def admin_moderation_queue():
-    if int(get_user().get("id", 0)) not in STAFF_ADMIN_IDS:
+    if not require_admin_id():
         return jsonify({"error": "forbidden"}), 403
     with db() as connection:
-        listings_rows = connection.execute("""SELECT id, seller_id AS author_id, title, category, price AS amount,
-            COALESCE(description, '') AS description, 'listing' AS item_type, status, created_at
-            FROM listings WHERE status IN ('pending','moderation') ORDER BY id ASC LIMIT 50""").fetchall()
-        order_rows = connection.execute("""SELECT id, customer_id AS author_id, title, category, budget AS amount,
-            COALESCE(description, '') AS description, 'order' AS item_type, status, created_at
-            FROM orders WHERE status='moderation' ORDER BY id ASC LIMIT 50""").fetchall()
+        listings_rows = connection.execute("""SELECT l.id, l.seller_id AS author_id, l.title, l.category, l.price AS amount,
+            COALESCE(l.description, '') AS description, 'listing' AS item_type, l.status, l.created_at,
+            COALESCE(NULLIF(u.display_name,''), NULLIF(u.username,''), 'Пользователь LT') AS author_name
+            FROM listings l LEFT JOIN users u ON u.user_id=l.seller_id WHERE l.status IN ('pending','moderation') ORDER BY l.id ASC LIMIT 50""").fetchall()
+        order_rows = connection.execute("""SELECT o.id, o.customer_id AS author_id, o.title, o.category, o.budget AS amount,
+            COALESCE(o.description, '') AS description, 'order' AS item_type, o.status, o.created_at,
+            COALESCE(NULLIF(u.display_name,''), NULLIF(u.username,''), 'Пользователь LT') AS author_name
+            FROM orders o LEFT JOIN users u ON u.user_id=o.customer_id WHERE o.status='moderation' ORDER BY o.id ASC LIMIT 50""").fetchall()
     return jsonify([dict(row) for row in [*listings_rows, *order_rows]])
 
 
 @app.get("/api/admin/queues/<queue_name>")
 def admin_operation_queue(queue_name: str):
     """Compact operational queues for the private MiniApp admin workspace."""
-    if int(get_user().get("id", 0)) not in STAFF_ADMIN_IDS:
+    if not require_admin_id():
         return jsonify({"error": "forbidden"}), 403
-    if queue_name not in {"payments", "payouts", "disputes", "tickets"}:
+    if queue_name not in {"payments", "payouts", "disputes", "tickets", "reports"}:
         return jsonify({"error": "not_found"}), 404
     if queue_name in {"payments", "payouts"} and not PAYMENTS_ENABLED:
         return jsonify([])
@@ -1324,6 +1509,11 @@ def admin_operation_queue(queue_name: str):
             rows = connection.execute("""SELECT id, 'Support request' AS title, 0 AS amount,
                 status, user_id, text AS note, created_at FROM tickets
                 WHERE status IN ('open', 'answered') ORDER BY id ASC LIMIT 50""").fetchall()
+        elif queue_name == "reports":
+            rows = connection.execute("""SELECT r.id, 'Жалоба пользователя' AS title, 0 AS amount,
+                COALESCE(r.status,'new') AS status, r.user_id, r.reason AS note, r.created_at,
+                COALESCE(r.target_type,'listing') AS target_type, COALESCE(r.target_id,r.listing_id,0) AS target_id
+                FROM reports r WHERE COALESCE(r.status,'new')='new' ORDER BY r.id ASC LIMIT 50""").fetchall()
         else:
             rows = connection.execute("""SELECT dd.id, COALESCE(o.title, l.title, 'Спор по сделке') AS title,
                 d.amount, d.status, dd.opened_by AS user_id, dd.reason AS note, dd.created_at, dd.deal_id
@@ -1335,8 +1525,8 @@ def admin_operation_queue(queue_name: str):
 
 @app.post("/api/admin/moderation/<item_type>/<int:item_id>")
 def admin_moderation_decision(item_type: str, item_id: int):
-    admin_id = current_user_id()
-    if not admin_id or admin_id not in STAFF_ADMIN_IDS:
+    admin_id = require_admin_id()
+    if not admin_id:
         return jsonify({"error": "forbidden"}), 403
     payload = request.get_json(silent=True) or {}
     action = str(payload.get("action", "")).lower()
@@ -1350,6 +1540,7 @@ def admin_moderation_decision(item_type: str, item_id: int):
             return jsonify({"error": "not_found"}), 404
         status = success_status if action == "approve" else "rejected"
         connection.execute(f"UPDATE {table} SET status=? WHERE id=?", (status, item_id))
+        log_admin_action(connection, admin_id, f"moderation_{action}_{item_type}", int(row["owner_id"]), f"#{item_id} {row['title']}; {note}".strip())
         connection.commit()
     if BOT_TOKEN:
         try:
@@ -1359,6 +1550,36 @@ def admin_moderation_decision(item_type: str, item_id: int):
             urlopen(Request(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data=body), timeout=4).read()
         except Exception:
             pass
+    return jsonify({"ok": True, "status": status})
+
+
+@app.post("/api/admin/queues/<queue_name>/<int:item_id>/action")
+def admin_queue_action(queue_name: str, item_id: int):
+    admin_id = require_admin_id()
+    if not admin_id:
+        return jsonify({"error": "forbidden"}), 403
+    payload = request.get_json(silent=True) or {}
+    action = str(payload.get("action", "")).lower()
+    note = str(payload.get("note", "")).strip()[:500]
+    with db() as connection:
+        if queue_name == "tickets" and action in {"close", "reopen"}:
+            row = connection.execute("SELECT user_id FROM tickets WHERE id=?", (item_id,)).fetchone()
+            if not row:
+                return jsonify({"error": "not_found"}), 404
+            status = "closed" if action == "close" else "open"
+            connection.execute("UPDATE tickets SET status=? WHERE id=?", (status, item_id))
+            target_id = int(row["user_id"])
+        elif queue_name == "reports" and action == "close":
+            row = connection.execute("SELECT user_id FROM reports WHERE id=?", (item_id,)).fetchone()
+            if not row:
+                return jsonify({"error": "not_found"}), 404
+            connection.execute("UPDATE reports SET status='closed' WHERE id=?", (item_id,))
+            target_id = int(row["user_id"])
+            status = "closed"
+        else:
+            return jsonify({"error": "validation", "message": "Это действие недоступно для очереди."}), 400
+        log_admin_action(connection, admin_id, f"{queue_name}_{action}", target_id, f"#{item_id} {note}".strip())
+        connection.commit()
     return jsonify({"ok": True, "status": status})
 
 

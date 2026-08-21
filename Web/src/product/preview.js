@@ -5,7 +5,7 @@ export const preview = enabled ? {
   route: new URLSearchParams(window.location.search).get("preview") || "home",
   me: { authenticated: true, id: 101, name: "Алексей Воронцов", username: "alex_lt", photo_url: "", is_admin: true, role: "both", unread_notifications: 3 },
   config: { beta: true, payments_enabled: false, categories: ["Telegram-боты и Mini Apps", "Дизайн и оформление Telegram", "Монтаж и создание контента", "AI-автоматизация", "Тексты для каналов и бизнеса"] },
-  preferences: { role: "both", theme: "system", notifications: { messages: true, orders: true, recommendations: true } },
+  preferences: { role: "both", theme: "system", notifications: { messages: true, orders: true, recommendations: true }, display: { animations: true, haptics: true, compact_cards: false, language: "ru" } },
   listings: [
     { id: 1, seller_id: 201, seller_name: "Botcraft Studio", seller_username: "botcraft", seller_verified: 1, title: "Разработаю Telegram-бота и Mini App под ключ", category: "Telegram-боты и Mini Apps", price: 18000, delivery_time: "7 дней", avg_rating: 5, reviews_count: 14, completed_orders: 26, is_favorite: true },
     { id: 2, seller_id: 202, seller_name: "Мария Соколова", seller_username: "maria.design", seller_verified: 1, title: "Оформлю Telegram-канал в едином стиле", category: "Дизайн и оформление Telegram", price: 4500, delivery_time: "3 дня", avg_rating: 4.9, reviews_count: 31, completed_orders: 54 },

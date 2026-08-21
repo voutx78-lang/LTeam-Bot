@@ -10,6 +10,7 @@ Web/node_modules/
 Web/edge-*/
 Web/preview-*.png
 Web/qa-*.png
+/qa-*.png
 Web/final-*.png
 Web/vite-preview*.log
 Web/preview-final.log

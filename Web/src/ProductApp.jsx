@@ -4,11 +4,11 @@ import CatalogScreen, { ListingDetail, OrderDetail } from "./product/screens/Cat
 import CreateScreen from "./product/screens/CreateScreen";
 import OrdersScreen, { DealWorkspace } from "./product/screens/OrdersScreen";
 import AdminScreen from "./product/screens/AdminScreen";
-import { GuideScreen, LegalScreen, NotificationsScreen, ProfileScreen, SellerProfileScreen, SettingsSheet, SupportScreen } from "./product/screens/AccountScreens";
+import { GuideScreen, LegalScreen, NotificationsScreen, ProfileEditSheet, ProfileScreen, SellerProfileScreen, SettingsSheet, SupportScreen } from "./product/screens/AccountScreens";
 import Icon from "./product/icons";
 import { BottomNav, Brand, EmptyState, Loading, ServiceCard, Sheet, Toast } from "./product/components";
 import { FALLBACK_CATEGORIES } from "./product/constants";
-import { api, send, telegram } from "./product/api";
+import { api, haptic, send, telegram } from "./product/api";
 import { preview } from "./product/preview";
 import "./product-ui.css";
 
@@ -33,10 +33,12 @@ export default function ProductApp() {
   const [orders, setOrders] = useState(preview?.orders || []);
   const [deals, setDeals] = useState(preview?.deals || []);
   const [notifications, setNotifications] = useState(preview?.notifications || []);
-  const [preferences, setPreferences] = useState(preview?.preferences || { role: "both", theme: "system", notifications: { messages: true, orders: true, recommendations: true } });
+  const [preferences, setPreferences] = useState(preview?.preferences || { role: "both", theme: "system", notifications: { messages: true, orders: true, recommendations: true }, display: { animations: true, haptics: true, compact_cards: false, language: "ru" } });
   const [loading, setLoading] = useState(!preview);
   const [toast, setToast] = useState({ message: "", tone: "default" });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [profileEditOpen, setProfileEditOpen] = useState(false);
+  const [transition, setTransition] = useState("forward");
   const [requestSheet, setRequestSheet] = useState(null);
   const [detail, setDetail] = useState(null);
   const [seller, setSeller] = useState(null);
@@ -82,22 +84,48 @@ export default function ProductApp() {
     return () => webApp?.offEvent?.("themeChanged", applyTheme);
   }, [preferences.theme]);
 
+  useEffect(() => {
+    const root = document.documentElement;
+    root.dataset.motion = preferences.display?.animations === false ? "reduced" : "full";
+    root.dataset.density = preferences.display?.compact_cards ? "compact" : "comfortable";
+  }, [preferences.display]);
+
+  useEffect(() => {
+    const webApp = telegram();
+    const applyInsets = () => {
+      const safe = webApp?.safeAreaInset || {};
+      const content = webApp?.contentSafeAreaInset || {};
+      const root = document.documentElement;
+      root.style.setProperty("--tg-safe-top", `${Math.max(Number(safe.top || 0), Number(content.top || 0))}px`);
+      root.style.setProperty("--tg-safe-bottom", `${Math.max(Number(safe.bottom || 0), Number(content.bottom || 0))}px`);
+    };
+    applyInsets();
+    webApp?.onEvent?.("safeAreaChanged", applyInsets);
+    webApp?.onEvent?.("contentSafeAreaChanged", applyInsets);
+    return () => { webApp?.offEvent?.("safeAreaChanged", applyInsets); webApp?.offEvent?.("contentSafeAreaChanged", applyInsets); };
+  }, []);
+
   const navigate = useCallback((name, params = {}, replace = false) => {
+    haptic("selection", preferences.display?.haptics !== false);
+    setTransition("forward");
     setRoute((current) => {
-      if (!replace) setStack((history) => [...history.slice(-9), current]);
+      const roots = ["home", "catalog", "create", "orders", "profile"];
+      if (!replace && current.name !== name && !(roots.includes(current.name) && roots.includes(name))) setStack((history) => [...history.slice(-9), current]);
       return { name, params };
     });
     window.scrollTo({ top: 0, behavior: "instant" });
-  }, []);
+  }, [preferences.display?.haptics]);
 
   const goBack = useCallback(() => {
+    haptic("selection", preferences.display?.haptics !== false);
+    setTransition("back");
     setStack((history) => {
       const previous = history.at(-1) || { name: "home", params: {} };
       setRoute(previous);
       return history.slice(0, -1);
     });
     window.scrollTo({ top: 0, behavior: "instant" });
-  }, []);
+  }, [preferences.display?.haptics]);
 
   useEffect(() => {
     const back = telegram()?.BackButton;
@@ -126,7 +154,22 @@ export default function ProductApp() {
   }
 
   async function savePreferences(next) {
-    try { const saved = await send("/api/preferences", "PUT", next); setPreferences(saved); setMe((current) => ({ ...current, role: saved.role })); setSettingsOpen(false); notify("Настройки сохранены"); }
+    try { const saved = await send("/api/preferences", "PUT", next); setPreferences(saved); setMe((current) => ({ ...current, role: saved.role })); setSettingsOpen(false); haptic("success", saved.display?.haptics !== false); notify("Настройки сохранены"); }
+    catch (error) { notify(error.message, "error"); }
+  }
+
+  async function saveProfile(next) {
+    try {
+      const saved = await send("/api/profile", "PUT", next);
+      setMe((current) => ({ ...current, name: saved.display_name, bio: saved.bio, skills: saved.skills }));
+      setProfileEditOpen(false);
+      haptic("success", preferences.display?.haptics !== false);
+      notify("Профиль обновлён");
+    } catch (error) { notify(error.message, "error"); }
+  }
+
+  async function clearRecent() {
+    try { await send("/api/recently-viewed", "DELETE", {}); notify("История просмотров очищена"); }
     catch (error) { notify(error.message, "error"); }
   }
 
@@ -159,7 +202,7 @@ export default function ProductApp() {
   else if (route.name === "create") content = <CreateScreen initialType={route.params.type || ""} categories={categories} onBack={goBack} notify={notify} onDone={async () => { await refresh(); navigate("orders", { tab: "published" }, true); }}/>;
   else if (route.name === "orders") content = <OrdersScreen me={me} deals={deals} orders={orders} onNavigate={navigate} notify={notify} refresh={refresh}/>;
   else if (route.name === "deal") content = selectedDeal ? <DealWorkspace me={me} deal={selectedDeal} onBack={goBack} notify={notify} onRefresh={refresh}/> : <section className="screen"><Loading label="Открываем заказ"/></section>;
-  else if (route.name === "profile") content = <ProfileScreen me={me} listings={listings} orders={orders} deals={deals} onNavigate={navigate} onSettings={() => setSettingsOpen(true)}/>;
+  else if (route.name === "profile") content = <ProfileScreen me={me} listings={listings} orders={orders} deals={deals} onNavigate={navigate} onSettings={() => setSettingsOpen(true)} onEdit={() => setProfileEditOpen(true)}/>;
   else if (route.name === "seller") content = <SellerProfileScreen profile={seller} reviews={sellerReviews} onBack={goBack} onListing={(id) => navigate("listing", { id })} onFavorite={toggleFavorite}/>;
   else if (route.name === "notifications") content = <NotificationsScreen items={notifications} onBack={goBack} onOpen={openNotification} onReadAll={readAllNotifications}/>;
   else if (route.name === "favorites") content = <section className="screen favorites-screen"><header className="simple-head"><button onClick={goBack}><Icon name="back"/></button><div><small>СОХРАНЁННОЕ</small><h1>Избранное</h1></div></header>{favorites.length ? <div className="catalog-grid">{favorites.map((item) => <ServiceCard key={item.id} item={item} onOpen={() => navigate("listing", { id: item.id })} onFavorite={toggleFavorite}/>)}</div> : <EmptyState icon="heart" title="В избранном пусто" text="Сохраняйте интересные услуги, чтобы быстро вернуться к ним." action="Открыть каталог" onAction={() => navigate("catalog")}/>}</section>;
@@ -170,8 +213,8 @@ export default function ProductApp() {
   else content = <HomeScreen me={me} categories={categories} listings={listings} orders={orders} onNavigate={navigate} onCreate={() => navigate("create")} onFavorite={toggleFavorite}/>;
 
   const navActive = route.name === "listing" || route.name === "order" ? "catalog" : route.name === "deal" ? "orders" : route.name === "seller" ? "profile" : route.name;
-  const showNav = ["home", "catalog", "orders", "profile"].includes(route.name);
-  return <main className="market-app">{content}{showNav && <BottomNav active={navActive} onNavigate={navigate} onCreate={() => navigate("create")}/>}<RequestSheet data={requestSheet} onClose={() => setRequestSheet(null)} notify={notify} onDone={async () => { setRequestSheet(null); await refresh(); navigate("orders"); }}/><SettingsSheet open={settingsOpen} preferences={preferences} onClose={() => setSettingsOpen(false)} onSave={savePreferences}/><Toast message={toast.message} tone={toast.tone} onClose={() => setToast({ message: "", tone: "default" })}/></main>;
+  const showNav = ["home", "catalog", "create", "orders", "profile"].includes(route.name);
+  return <main className="market-app"><div key={`${route.name}-${JSON.stringify(route.params)}`} className={`route-stage route-${transition}`}>{content}</div>{showNav && <BottomNav active={navActive} onNavigate={navigate} onCreate={() => navigate("create")}/>}<RequestSheet data={requestSheet} onClose={() => setRequestSheet(null)} notify={notify} onDone={async () => { setRequestSheet(null); await refresh(); navigate("orders"); }}/><SettingsSheet open={settingsOpen} preferences={preferences} onClose={() => setSettingsOpen(false)} onSave={savePreferences} onClearRecent={clearRecent}/><ProfileEditSheet open={profileEditOpen} me={me} onClose={() => setProfileEditOpen(false)} onSave={saveProfile}/><Toast message={toast.message} tone={toast.tone} onClose={() => setToast({ message: "", tone: "default" })}/></main>;
 }
 
 function RequestSheet({ data, onClose, notify, onDone }) {

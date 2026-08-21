@@ -2,8 +2,19 @@ const API_BASE = import.meta.env.VITE_API_URL || "https://lteam-botminiapp.onren
 
 export const telegram = () => window.Telegram?.WebApp;
 
+export function haptic(kind = "selection", enabled = true) {
+  if (!enabled) return;
+  const feedback = telegram()?.HapticFeedback;
+  try {
+    if (kind === "success" || kind === "error" || kind === "warning") feedback?.notificationOccurred?.(kind);
+    else if (kind === "light" || kind === "medium" || kind === "heavy") feedback?.impactOccurred?.(kind);
+    else feedback?.selectionChanged?.();
+  } catch { /* Telegram haptics are optional. */ }
+}
+
 export async function api(path, options = {}) {
-  const initData = telegram()?.initData || "";
+  const localPreview = ["localhost", "127.0.0.1"].includes(window.location.hostname) ? new URLSearchParams(window.location.search).get("initData") || "" : "";
+  const initData = telegram()?.initData || localPreview;
   const headers = {
     ...(options.body ? { "Content-Type": "application/json" } : {}),
     ...(initData ? { "X-Telegram-Init-Data": initData } : {}),

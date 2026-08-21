@@ -139,6 +139,7 @@ def init_product_schema(connection: sqlite3.Connection) -> None:
     _add_columns(
         connection,
         [
+            "ALTER TABLE user_preferences ADD COLUMN display_settings TEXT DEFAULT '{}'",
             "ALTER TABLE users ADD COLUMN bio TEXT DEFAULT ''",
             "ALTER TABLE users ADD COLUMN skills_json TEXT DEFAULT '[]'",
             "ALTER TABLE users ADD COLUMN market_role TEXT DEFAULT 'both'",

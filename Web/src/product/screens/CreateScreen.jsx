@@ -15,9 +15,10 @@ const blank = {
 };
 
 export default function CreateScreen({ initialType = "", categories, onBack, onDone, notify }) {
-  const [type, setType] = useState(initialType || "");
+  const safeInitialType = ["listing", "order"].includes(initialType) ? initialType : "";
+  const [type, setType] = useState(safeInitialType);
   const [step, setStep] = useState(1);
-  const [form, setForm] = useState(blank[initialType] || null);
+  const [form, setForm] = useState(blank[safeInitialType] || null);
   const [saving, setSaving] = useState(false);
   const hydrated = useRef(false);
   const totalSteps = type === "listing" ? 4 : 3;

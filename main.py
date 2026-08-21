@@ -3,6 +3,7 @@ import sqlite3
 import html
 import re
 import json
+import traceback
 from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
@@ -52,6 +53,20 @@ STAFF_ROLE_LEVELS = {"user": 0, "moderator": 1, "admin": 2, "owner": 3}
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=SQLiteStorage())
 NAV_MENU_MESSAGES: dict[int, tuple[int, int]] = {}
+
+
+@dp.message(CommandStart())
+async def start(message: Message, state: FSMContext):
+    """Always make /start a reliable escape hatch from any unfinished flow.
+
+    This handler is intentionally registered before every state-specific
+    message handler.  Aiogram stops on the first matching handler, so placing
+    /start lower in this large legacy module allowed an active FSM state to
+    consume the command as ordinary form input.
+    """
+    await state.clear()
+    save_user(message)
+    await send_home(message)
 
 DB_PATH = "market.db"
 BANNER_PATH = "Baner.png"
@@ -2081,12 +2096,6 @@ async def send_home(message: Message):
         lteam_reply_menu(message.from_user.id),
         text="⬇️ Основные разделы доступны в нижнем меню.",
     )
-
-
-@dp.message(CommandStart())
-async def start(message: Message):
-    save_user(message)
-    await send_home(message)
 
 
 @dp.message(Command("cancel"))
@@ -13398,6 +13407,7 @@ async def handle_unexpected_update_error(event: ErrorEvent) -> bool:
     update = event.update
     error_name = type(event.exception).__name__
     print(f"[LTeam] update handled safely after {error_name}: {event.exception}")
+    traceback.print_exception(type(event.exception), event.exception, event.exception.__traceback__)
 
     try:
         if update.callback_query:

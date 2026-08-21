@@ -35,6 +35,7 @@ export default function ProductApp() {
   const [notifications, setNotifications] = useState(preview?.notifications || []);
   const [preferences, setPreferences] = useState(preview?.preferences || { role: "both", theme: "system", notifications: { messages: true, orders: true, recommendations: true }, display: { animations: true, haptics: true, compact_cards: false, language: "ru" } });
   const [loading, setLoading] = useState(!preview);
+  const [bootError, setBootError] = useState("");
   const [toast, setToast] = useState({ message: "", tone: "default" });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [profileEditOpen, setProfileEditOpen] = useState(false);
@@ -52,6 +53,7 @@ export default function ProductApp() {
 
   const refresh = useCallback(async () => {
     const nextMe = await api("/api/me");
+    setBootError("");
     setMe((current) => ({ ...current, ...nextMe }));
     if (!nextMe.authenticated) { setLoading(false); return false; }
     const [nextConfig, nextListings, nextOrders, nextDeals, nextNotifications, nextPreferences] = await Promise.all([
@@ -68,7 +70,7 @@ export default function ProductApp() {
     const webApp = telegram();
     webApp?.ready?.(); webApp?.expand?.();
     webApp?.setHeaderColor?.("bg_color"); webApp?.setBackgroundColor?.("bg_color"); webApp?.setBottomBarColor?.("bg_color");
-    refresh().catch((error) => { setLoading(false); notify(error.message, "error"); });
+    refresh().catch((error) => { setLoading(false); setBootError(error.message || "Сервис временно недоступен"); });
   }, [refresh, notify]);
 
   useEffect(() => {
@@ -79,6 +81,15 @@ export default function ProductApp() {
       const effective = selected === "system" ? (preview ? systemTheme : (webApp?.colorScheme || systemTheme)) : selected;
       document.documentElement.dataset.theme = effective;
       document.documentElement.style.colorScheme = effective;
+      const chrome = effective === "dark"
+        ? { header: "#0b0f1a", background: "#0b0f1a", bottom: "#101522" }
+        : { header: "#f5f6fb", background: "#f5f6fb", bottom: "#ffffff" };
+      try {
+        webApp?.setHeaderColor?.(chrome.header);
+        webApp?.setBackgroundColor?.(chrome.background);
+        webApp?.setBottomBarColor?.(chrome.bottom);
+      } catch { /* Older Telegram clients keep their native chrome colors. */ }
+      document.querySelector('meta[name="theme-color"]')?.setAttribute("content", chrome.header);
     };
     applyTheme(); webApp?.onEvent?.("themeChanged", applyTheme);
     return () => webApp?.offEvent?.("themeChanged", applyTheme);
@@ -179,15 +190,30 @@ export default function ProductApp() {
     await send("/api/notifications/read", "POST", {}).catch(() => {});
   }, []);
 
-  function openNotification(item) {
+  async function openNotification(item) {
+    if (!item.is_read) {
+      setNotifications((current) => current.map((entry) => entry.id === item.id ? { ...entry, is_read: 1 } : entry));
+      setMe((current) => ({ ...current, unread_notifications: Math.max(0, Number(current.unread_notifications || 0) - 1) }));
+      await send("/api/notifications/read", "POST", { ids: [item.id] }).catch(() => {});
+    }
     const target = String(item.route || "notifications");
     if (target.startsWith("deal:")) navigate("deal", { id: Number(target.split(":")[1]) });
-    else if (target.startsWith("profile:")) navigate("seller", { id: Number(target.split(":")[1]) });
-    else if (["home", "catalog", "orders", "profile", "support"].includes(target)) navigate(target);
+    else if (target.startsWith("listing:")) navigate("listing", { id: Number(target.split(":")[1]) });
+    else if (target.startsWith("order:")) navigate("order", { id: Number(target.split(":")[1]) });
+    else if (target.startsWith("profile:") || target.startsWith("seller:")) navigate("seller", { id: Number(target.split(":")[1]) });
+    else if (["home", "catalog", "create", "orders", "profile", "support", "admin"].includes(target)) navigate(target);
     else navigate("orders");
   }
 
+  async function retryBoot() {
+    setBootError("");
+    setLoading(true);
+    try { await refresh(); }
+    catch (error) { setLoading(false); setBootError(error.message || "Сервис временно недоступен"); }
+  }
+
   if (loading) return <main className="market-app"><Loading/></main>;
+  if (bootError) return <main className="market-app"><section className="telegram-gate connection-state"><Brand/><div className="connection-orbit"><i/><span><Icon name="shield" size={32}/></span><i/></div><small>СОЕДИНЕНИЕ С LT MARKET</small><h1>Не удалось загрузить данные</h1><p>{bootError}. На бесплатном сервере первый запуск иногда занимает до минуты.</p><button className="primary-button" onClick={retryBoot}>Попробовать снова <Icon name="arrow"/></button></section></main>;
   if (!me.authenticated) return <main className="market-app"><section className="telegram-gate"><Brand/><div className="gate-visual"><span><Icon name="shield" size={34}/></span><i/><i/></div><small>TELEGRAM MINI APP</small><h1>Откройте LT Market<br/>в Telegram</h1><p>Профиль, публикации и заказы доступны после безопасной авторизации через бота.</p><a className="primary-button" href="https://t.me/lteam_marketbot?startapp=market">Открыть в Telegram <Icon name="arrow"/></a></section></main>;
 
   const categories = config.categories?.length ? config.categories : FALLBACK_CATEGORIES;

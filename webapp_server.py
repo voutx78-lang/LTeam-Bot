@@ -21,6 +21,17 @@ from app.database import db as shared_db
 from app.events import create_event
 from app.runtime_diagnostics import recent_update_errors
 from app.market_policy import ALLOWED_CATEGORIES, MARKETPLACE_BETA, PAYMENTS_ENABLED, normalize_category, validate_category, validate_market_text
+from app.star_payments import (
+    StarPaymentError,
+    create_invoice_link,
+    create_pending_payment,
+    expire_listing_promotions,
+    list_user_payments,
+    mark_invoice_failed,
+    payment_status,
+    public_products,
+    refund_payment,
+)
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_IDS = {int(value.strip()) for value in os.getenv("ADMIN_IDS", "").split(",") if value.strip().isdigit()}
 OWNER_IDS = {int(value.strip()) for value in os.getenv("OWNER_IDS", "").split(",") if value.strip().isdigit()}
@@ -85,6 +96,8 @@ def market_config():
     return jsonify({
         "beta": MARKETPLACE_BETA,
         "payments_enabled": PAYMENTS_ENABLED,
+        "stars_enabled": bool(BOT_TOKEN),
+        "star_products": public_products(),
         "categories": list(ALLOWED_CATEGORIES),
         "payment_notice": (
             "Расчёты между участниками пока не проводятся через LTeam. "
@@ -174,8 +187,9 @@ def health_check():
         return jsonify({
             "ok": True,
             "product": "LT Market",
-            "version": "2026.08-create-route-fixed",
+            "version": "2026.08-stars-v1",
             "payments_enabled": PAYMENTS_ENABLED,
+            "stars_enabled": bool(BOT_TOKEN),
             "storage": "cloud_snapshot" if os.getenv("DATABASE_URL") else "local",
         })
     except Exception:
@@ -233,6 +247,82 @@ def me():
         "bio": profile["bio"] if profile else "",
         "skills": profile_skills,
     })
+
+
+@app.post("/api/payments/stars/invoice")
+def create_star_invoice():
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    if not BOT_TOKEN:
+        return jsonify({"error": "unavailable", "message": "Оплата Stars временно недоступна."}), 503
+    payload = request.get_json(silent=True) or {}
+    try:
+        listing_id = int(payload.get("listing_id", 0))
+    except (TypeError, ValueError):
+        listing_id = 0
+    try:
+        with db() as connection:
+            payment = create_pending_payment(
+                connection,
+                user_id=user_id,
+                product_code=str(payload.get("product_code", "")),
+                listing_id=listing_id,
+            )
+            connection.commit()
+        invoice_link = create_invoice_link(BOT_TOKEN, payment)
+    except StarPaymentError as error:
+        if "payment" in locals():
+            with db() as connection:
+                mark_invoice_failed(connection, payment["id"])
+                connection.commit()
+        return jsonify({"error": "payment", "message": str(error)}), 400
+    return jsonify({
+        "payment_id": payment["id"],
+        "invoice_link": invoice_link,
+        "stars": payment["stars"],
+        "title": payment["title"],
+        "status": "pending",
+    }), 201
+
+
+@app.get("/api/payments/stars")
+def star_payment_history():
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    with db() as connection:
+        rows = list_user_payments(connection, user_id)
+    return jsonify(rows)
+
+
+@app.get("/api/payments/stars/<int:payment_id>")
+def star_payment_state(payment_id: int):
+    user_id = current_user_id()
+    if not user_id:
+        return jsonify({"error": "unauthorized"}), 401
+    with db() as connection:
+        item = payment_status(connection, payment_id, user_id)
+    if not item:
+        return jsonify({"error": "not_found"}), 404
+    item.pop("telegram_payment_charge_id", None)
+    return jsonify(item)
+
+
+@app.post("/api/admin/payments/stars/<int:payment_id>/refund")
+def admin_refund_star_payment(payment_id: int):
+    admin_id = require_admin_id()
+    if not admin_id or admin_id not in OWNER_IDS:
+        return jsonify({"error": "forbidden", "message": "Возвраты доступны только владельцу."}), 403
+    try:
+        with db() as connection:
+            payment = refund_payment(connection, BOT_TOKEN, payment_id)
+            log_admin_action(connection, admin_id, "refund_stars", int(payment["user_id"]), f"payment_id={payment_id}; stars={payment['stars']}")
+            connection.commit()
+    except StarPaymentError as error:
+        return jsonify({"error": "payment", "message": str(error)}), 400
+    notify_user(int(payment["user_id"]), f"Telegram Stars по операции #{payment_id} возвращены.", event_type="payment", title="Возврат Stars", route="promotions", entity_id=payment_id)
+    return jsonify({"ok": True, "status": "refunded"})
 
 
 @app.route("/api/preferences", methods=["GET", "PUT"])
@@ -372,6 +462,8 @@ def listings():
     if not user_id:
         return jsonify({"error": "unauthorized"}), 401
     with db() as connection:
+        expire_listing_promotions(connection)
+        connection.commit()
         rows = connection.execute("""SELECT l.id, l.title, l.category, l.price, COALESCE(l.description, '') AS description,
             l.seller_id, COALESCE(l.delivery_time, '') AS delivery_time, COALESCE(u.username, '') AS seller_username,
             COALESCE(u.display_name, '') AS seller_name, COALESCE(l.image_data, '') AS image_data,

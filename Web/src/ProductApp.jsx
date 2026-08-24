@@ -4,6 +4,7 @@ import CatalogScreen, { ListingDetail, OrderDetail } from "./product/screens/Cat
 import CreateScreen from "./product/screens/CreateScreen";
 import OrdersScreen, { DealWorkspace } from "./product/screens/OrdersScreen";
 import AdminScreen from "./product/screens/AdminScreen";
+import PromotionsScreen from "./product/screens/PromotionsScreen";
 import { GuideScreen, LegalScreen, NotificationsScreen, ProfileEditSheet, ProfileScreen, SellerProfileScreen, SettingsSheet, SupportScreen } from "./product/screens/AccountScreens";
 import Icon from "./product/icons";
 import { BottomNav, Brand, EmptyState, Loading, ServiceCard, Sheet, Toast } from "./product/components";
@@ -234,6 +235,7 @@ export default function ProductApp() {
   else if (route.name === "orders") content = <OrdersScreen me={me} deals={deals} orders={orders} onNavigate={navigate} notify={notify} refresh={refresh}/>;
   else if (route.name === "deal") content = selectedDeal ? <DealWorkspace me={me} deal={selectedDeal} onBack={goBack} notify={notify} onRefresh={refresh}/> : <section className="screen"><Loading label="Открываем заказ"/></section>;
   else if (route.name === "profile") content = <ProfileScreen me={me} listings={listings} orders={orders} deals={deals} onNavigate={navigate} onSettings={() => setSettingsOpen(true)} onEdit={() => setProfileEditOpen(true)}/>;
+  else if (route.name === "promotions") content = <PromotionsScreen me={me} listings={listings} products={config.star_products || []} initialListingId={route.params.listing_id} onBack={goBack} notify={notify} onUpdated={refresh}/>;
   else if (route.name === "seller") content = <SellerProfileScreen profile={seller} reviews={sellerReviews} onBack={goBack} onListing={(id) => navigate("listing", { id })} onFavorite={toggleFavorite}/>;
   else if (route.name === "notifications") content = <NotificationsScreen items={notifications} onBack={goBack} onOpen={openNotification} onReadAll={readAllNotifications}/>;
   else if (route.name === "favorites") content = <section className="screen favorites-screen"><header className="simple-head"><button onClick={goBack}><Icon name="back"/></button><div><small>СОХРАНЁННОЕ</small><h1>Избранное</h1></div></header>{favorites.length ? <div className="catalog-grid">{favorites.map((item) => <ServiceCard key={item.id} item={item} onOpen={() => navigate("listing", { id: item.id })} onFavorite={toggleFavorite}/>)}</div> : <EmptyState icon="heart" title="В избранном пусто" text="Сохраняйте интересные услуги, чтобы быстро вернуться к ним." action="Открыть каталог" onAction={() => navigate("catalog")}/>}</section>;

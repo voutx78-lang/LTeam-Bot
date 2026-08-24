@@ -20,21 +20,36 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
     KeyboardButton,
     ErrorEvent,
+    PreCheckoutQuery,
 )
 
 load_dotenv()  # Эта строка обязательна, она загрузит переменные из .env
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
+from app.database import db, init_db
 from app.storage import SQLiteStorage
 from app.runtime_diagnostics import record_update_error
+from app.star_payments import (
+    PROMO_PRODUCTS,
+    StarPaymentError,
+    apply_listing_promo,
+    complete_payment,
+    create_invoice_link,
+    create_pending_payment,
+    expire_listing_promotions,
+    list_user_payments,
+    mark_invoice_failed,
+    refund_payment,
+    validate_pre_checkout,
+)
 from app.states import (
     AdminBanState, AdminMessageState, AdminMuteState, AdminReasonState,
     AdminRoleState, AdminSearchUserState, AdminUnbanState, AdminUserPickState,
     AdminWarnState, AppealState, BroadcastState, CreateListing, CreateOrder,
     DealChatState, DealFinalPriceState, DisputeState, ListingDiscussionState,
     MarketFilterState, OrderChatState, OrderResponseState, PayoutProfileState,
-    ProfileDescriptionState, PromoState, ReceiptState, ReportState, ReviewState,
+    ProfileDescriptionState, ReceiptState, ReportState, ReviewState,
     SearchState, SupportState, VerificationRequestState, WithdrawalState,
 )
 
@@ -180,10 +195,108 @@ ORDER_EXAMPLES = {
 }
 
 PROMO_OPTIONS = {
-    "bump": {"title": "🚀 Поднять объявление", "price": 50, "days": 0, "description": "Объявление поднимется выше в новых и результатах поиска."},
-    "top": {"title": "🔥 В ТОП", "price": 150, "days": 7, "description": "Объявление попадёт в отдельный блок ТОП и будет выше в списках."},
-    "highlight": {"title": "⭐ Выделить", "price": 80, "days": 7, "description": "Объявление будет визуально выделяться в списке и карточке."},
+    key: {**value, "price": value["stars"]}
+    for key, value in PROMO_PRODUCTS.items()
 }
+
+
+@dp.pre_checkout_query()
+async def stars_pre_checkout(query: PreCheckoutQuery):
+    """Telegram gives the bot ten seconds to validate every Star invoice."""
+    try:
+        with db() as conn:
+            valid, reason = validate_pre_checkout(
+                conn,
+                invoice_payload=query.invoice_payload,
+                user_id=query.from_user.id,
+                currency=query.currency,
+                total_amount=query.total_amount,
+            )
+        await query.answer(ok=valid, error_message=reason or None)
+    except Exception:
+        await query.answer(ok=False, error_message="Не удалось проверить счёт. Создайте новый в LT Market.")
+
+
+@dp.message(F.successful_payment)
+async def stars_successful_payment(message: Message):
+    """Activate a product only after Telegram sends its signed payment update."""
+    paid = message.successful_payment
+    try:
+        with db() as conn:
+            result, activated = complete_payment(
+                conn,
+                invoice_payload=paid.invoice_payload,
+                user_id=message.from_user.id,
+                currency=paid.currency,
+                total_amount=paid.total_amount,
+                telegram_charge_id=paid.telegram_payment_charge_id,
+                provider_charge_id=paid.provider_payment_charge_id or "",
+            )
+            conn.commit()
+        if activated:
+            await message.answer(
+                f"✅ Оплата {result['stars']} ⭐ подтверждена.\n\n"
+                f"{result['title']} для объявления #{result['listing_id']} уже активировано.\n"
+                f"Номер операции: #{result['id']}"
+            )
+        else:
+            await message.answer(f"✅ Эта оплата уже учтена. Номер операции: #{result['id']}")
+    except StarPaymentError as error:
+        for admin_id in ADMIN_NOTIFY_IDS:
+            try:
+                await bot.send_message(admin_id, f"⚠️ Не удалось зачислить Stars пользователю {message.from_user.id}: {error}")
+            except Exception:
+                pass
+        await message.answer("Платёж получен Telegram, но активация требует проверки. Напишите /paysupport — деньги не потеряются.")
+
+
+@dp.message(Command("paysupport"))
+async def stars_payment_support(message: Message):
+    await message.answer(
+        "⭐ <b>Поддержка платежей LT Market</b>\n\n"
+        "Пришлите номер операции и коротко опишите проблему. "
+        "Посмотреть свои операции можно командой /stars.\n\n"
+        "Если списание прошло, мы проверим журнал Telegram и при необходимости оформим возврат.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💬 Открыть поддержку", callback_data="support")],
+        ]),
+    )
+
+
+@dp.message(Command("stars"))
+async def stars_history(message: Message):
+    with db() as conn:
+        payments = list_user_payments(conn, message.from_user.id, limit=12)
+    if not payments:
+        await message.answer("У вас пока нет операций в Telegram Stars.")
+        return
+    status_labels = {"pending": "ожидает оплаты", "paid": "оплачено", "refunded": "возвращено", "invoice_failed": "счёт не создан"}
+    lines = ["⭐ <b>Операции Stars</b>", ""]
+    for item in payments:
+        lines.append(
+            f"#{item['id']} · {item['stars']} ⭐ · {status_labels.get(item['status'], item['status'])} · объявление #{item['listing_id']}"
+        )
+    lines.append("\nВопрос по списанию: /paysupport")
+    await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@dp.message(Command("refundstars"))
+async def stars_admin_refund(message: Message):
+    if message.from_user.id not in OWNER_IDS:
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) != 2 or not parts[1].isdigit():
+        await message.answer("Использование: /refundstars ID_ОПЕРАЦИИ")
+        return
+    try:
+        with db() as conn:
+            payment = refund_payment(conn, BOT_TOKEN, int(parts[1]))
+            conn.commit()
+        await message.answer(f"✅ Возврат операции #{payment['id']} выполнен через Telegram.")
+        await bot.send_message(int(payment["user_id"]), f"↩️ Telegram Stars по операции #{payment['id']} возвращены.")
+    except StarPaymentError as error:
+        await message.answer(f"❌ {error}")
 
 # ===== АВТО-МОДЕРАЦИЯ И АДМИН-УВЕДОМЛЕНИЯ =====
 FORBIDDEN_WORDS = [
@@ -324,7 +437,6 @@ def user_public_status(user_id: int) -> str:
     return trust_public_badge(user_id) if 'trust_public_badge' in globals() else ("👑 Official LTeam" if is_admin(user_id) else seller_stats(user_id).get("status", "🆕 Новый пользователь"))
 
 
-from app.database import db, init_db
 from app.market_policy import PAYMENTS_ENABLED
 def ensure_user_search_columns():
     """Мягкая миграция users для поиска по username / имени / нику."""
@@ -4696,15 +4808,17 @@ ID: <code>{listing_id}</code>
 
 def promo_keyboard(listing_id: int):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"🚀 Поднять — {PROMO_OPTIONS['bump']['price']}₽", callback_data=f"promo_select:{listing_id}:bump")],
-        [InlineKeyboardButton(text=f"🔥 В ТОП на 7 дней — {PROMO_OPTIONS['top']['price']}₽", callback_data=f"promo_select:{listing_id}:top")],
-        [InlineKeyboardButton(text=f"⭐ Выделить на 7 дней — {PROMO_OPTIONS['highlight']['price']}₽", callback_data=f"promo_select:{listing_id}:highlight")],
+        [InlineKeyboardButton(text=f"🚀 Поднять — {PROMO_OPTIONS['bump']['stars']} ⭐", callback_data=f"promo_select:{listing_id}:bump")],
+        [InlineKeyboardButton(text=f"🔥 В ТОП на 7 дней — {PROMO_OPTIONS['top']['stars']} ⭐", callback_data=f"promo_select:{listing_id}:top")],
+        [InlineKeyboardButton(text=f"✨ Выделить на 7 дней — {PROMO_OPTIONS['highlight']['stars']} ⭐", callback_data=f"promo_select:{listing_id}:highlight")],
         [InlineKeyboardButton(text="⬅️ К объявлению", callback_data=f"view_listing:{listing_id}")],
     ])
 
 
 def promo_status_text(listing_id: int) -> str:
     with db() as conn:
+        expire_listing_promotions(conn)
+        conn.commit()
         row = conn.execute("SELECT COALESCE(is_top,0), COALESCE(is_highlight,0), bumped_at, top_until, highlight_until FROM listings WHERE id=?", (listing_id,)).fetchone()
     if not row:
         return ""
@@ -4758,148 +4872,44 @@ async def promo_select(call: CallbackQuery):
     if not option:
         await call.answer("Неизвестный тип продвижения", show_alert=True)
         return
-    with db() as conn:
-        row = conn.execute("SELECT seller_id, title FROM listings WHERE id=? AND status='active'", (listing_id,)).fetchone()
-    if not row:
-        await call.answer("Объявление не найдено", show_alert=True)
-        return
-    seller_id, title = row
-    if call.from_user.id != seller_id and not is_admin(call.from_user.id):
-        await call.answer("Нет доступа", show_alert=True)
+    try:
+        with db() as conn:
+            payment = create_pending_payment(
+                conn,
+                user_id=call.from_user.id,
+                product_code=option["code"],
+                listing_id=listing_id,
+            )
+            conn.commit()
+        invoice_link = create_invoice_link(BOT_TOKEN, payment)
+    except StarPaymentError as error:
+        if "payment" in locals():
+            with db() as conn:
+                mark_invoice_failed(conn, payment["id"])
+                conn.commit()
+        await call.answer(str(error), show_alert=True)
         return
     await show_screen(call, f"""
 ━━━━━━━━━━━━━━
-💰 <b>Оплата продвижения</b>
+⭐ <b>Оплата в Telegram Stars</b>
 ━━━━━━━━━━━━━━
 
-📦 Объявление: <b>{html.escape(title or 'Без названия')}</b>
-🎯 Услуга: <b>{option['title']}</b>
-💵 Сумма: <b>{option['price']}₽</b>
+📦 Объявление: <b>{html.escape(payment['listing_title'])}</b>
+🎯 Услуга: <b>{html.escape(payment['title'])}</b>
+⭐ Стоимость: <b>{payment['stars']} Stars</b>
 
-{html.escape(option['description'])}
+{html.escape(payment['description'])}
 
-Выберите способ оплаты. Реквизиты LTeam покажутся только после выбора способа.
+Продвижение включится автоматически после подтверждения Telegram. Чеки и ручная проверка администратора не нужны.
 """, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 СБП", callback_data=f"promo_pay:{listing_id}:{promo_type}:sbp")],
-        [InlineKeyboardButton(text="🪙 Крипта", callback_data=f"promo_pay:{listing_id}:{promo_type}:crypto")],
+        [InlineKeyboardButton(text=f"⭐ Оплатить {payment['stars']} Stars", url=invoice_link)],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"promo_menu:{listing_id}")],
     ]), parse_mode="HTML")
     await call.answer()
 
 
-@dp.callback_query(F.data.startswith("promo_pay:"))
-async def promo_pay(call: CallbackQuery, state: FSMContext):
-    _, listing_raw, promo_type, method = call.data.split(":")
-    listing_id = int(listing_raw)
-    option = PROMO_OPTIONS.get(promo_type)
-    if not option:
-        await call.answer("Неизвестный тип продвижения", show_alert=True)
-        return
-    with db() as conn:
-        row = conn.execute("SELECT seller_id, title FROM listings WHERE id=? AND status='active'", (listing_id,)).fetchone()
-        if not row:
-            await call.answer("Объявление не найдено", show_alert=True)
-            return
-        seller_id, title = row
-        if call.from_user.id != seller_id and not is_admin(call.from_user.id):
-            await call.answer("Нет доступа", show_alert=True)
-            return
-        cur = conn.cursor()
-        cur.execute("INSERT INTO promo_payments (listing_id, user_id, promo_type, amount, payment_method, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (listing_id, call.from_user.id, promo_type, option['price'], method, "waiting_receipt", datetime.now().isoformat()))
-        promo_id = cur.lastrowid
-        conn.commit()
-    await state.update_data(promo_id=promo_id)
-    await state.set_state(PromoState.receipt)
-    if method == "sbp":
-        pay_block = f"🏦 Банк: <b>{html.escape(SBP_BANK)}</b>\n👤 Получатель: <b>{html.escape(SBP_NAME)}</b>\n📱 Телефон: <code>{html.escape(SBP_PHONE)}</code>"
-    else:
-        pay_block = f"🪙 Кошелёк LTeam:\n<code>{html.escape(CRYPTO_WALLET)}</code>"
-    await show_screen(call, f"""
-━━━━━━━━━━━━━━
-💳 <b>Оплатите продвижение</b>
-━━━━━━━━━━━━━━
-
-Заявка: <b>#{promo_id}</b>
-📦 Объявление: <b>{html.escape(title or 'Без названия')}</b>
-🎯 Услуга: <b>{option['title']}</b>
-💵 Сумма: <b>{option['price']}₽</b>
-
-{pay_block}
-
-⚠️ После оплаты отправьте чек, скрин или хэш транзакции одним сообщением.
-""", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ К объявлению", callback_data=f"view_listing:{listing_id}")]]), parse_mode="HTML")
-    await call.answer()
-
-
-@dp.message(PromoState.receipt)
-async def promo_receipt_save(message: Message, state: FSMContext):
-    data = await state.get_data()
-    promo_id = data.get("promo_id")
-    if not promo_id:
-        await state.clear()
-        await screen_answer(message, "❌ Заявка на продвижение не найдена.")
-        return
-    if message.photo:
-        receipt_text = "📷 Пользователь отправил фото чека"
-    elif message.document:
-        receipt_text = "📎 Пользователь отправил документ"
-    else:
-        receipt_text = message.text or "Пользователь отправил подтверждение оплаты"
-    with db() as conn:
-        row = conn.execute("""
-            SELECT p.listing_id, p.user_id, p.promo_type, p.amount, p.payment_method, l.title
-            FROM promo_payments p
-            JOIN listings l ON l.id = p.listing_id
-            WHERE p.id=?
-            """, (promo_id,)).fetchone()
-        if not row:
-            await state.clear()
-            await screen_answer(message, "❌ Заявка на продвижение не найдена.")
-            return
-        listing_id, user_id, promo_type, amount, method, title = row
-        conn.execute("UPDATE promo_payments SET receipt=?, status=? WHERE id=?", (receipt_text, "waiting_admin_confirm", promo_id))
-        conn.commit()
-    await state.clear()
-    option = PROMO_OPTIONS[promo_type]
-    await screen_answer(message, f"""
-✅ <b>Чек отправлен</b>
-
-Заявка на продвижение: <b>#{promo_id}</b>
-Услуга: <b>{option['title']}</b>
-
-Админ проверит оплату и активирует продвижение.
-""", parse_mode="HTML")
-    admin_text = f"""
-━━━━━━━━━━━━━━
-💰 <b>Продвижение на проверку</b>
-━━━━━━━━━━━━━━
-
-Заявка: <b>#{promo_id}</b>
-📦 Объявление: <b>#{listing_id}</b> — {html.escape(title or 'Без названия')}
-👤 Пользователь: <code>{user_id}</code>
-🎯 Услуга: <b>{option['title']}</b>
-💵 Сумма: <b>{amount}₽</b>
-💳 Метод: <b>{html.escape(method or '—')}</b>
-
-🧾 Чек / данные оплаты:
-{html.escape(receipt_text)}
-"""
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"admin_promo_ok:{promo_id}"), InlineKeyboardButton(text="❌ Отклонить", callback_data=f"admin_promo_no:{promo_id}")],
-        [InlineKeyboardButton(text="📦 Открыть объявление", callback_data=f"view_listing:{listing_id}")],
-    ])
-    for admin in ADMIN_NOTIFY_IDS:
-        await bot.send_message(admin, admin_text, reply_markup=keyboard, parse_mode="HTML")
-
-
 def apply_promo_to_listing(conn, listing_id: int, promo_type: str):
-    now = datetime.now().isoformat()
-    if promo_type == "bump":
-        conn.execute("UPDATE listings SET bumped_at=? WHERE id=?", (now, listing_id))
-    elif promo_type == "top":
-        conn.execute("UPDATE listings SET is_top=1, top_until=? WHERE id=?", (now, listing_id))
-    elif promo_type == "highlight":
-        conn.execute("UPDATE listings SET is_highlight=1, highlight_until=? WHERE id=?", (now, listing_id))
+    apply_listing_promo(conn, listing_id, promo_type)
 
 
 @dp.callback_query(F.data.startswith("admin_promo_ok:"))
@@ -14079,6 +14089,8 @@ async def setup_bot_commands():
         BotCommand(command="status", description="Мой кабинет и сделки"),
         BotCommand(command="help", description="Помощь по сервису"),
         BotCommand(command="rules", description="Правила площадки"),
+        BotCommand(command="stars", description="Мои платежи Stars"),
+        BotCommand(command="paysupport", description="Поддержка платежей"),
         BotCommand(command="cancel", description="Отменить текущее действие"),
     ])
 

@@ -1,3 +1,5 @@
+import { useEffect, useId } from "react";
+import { createPortal } from "react-dom";
 import Icon from "./icons";
 import { initials, money } from "./api";
 
@@ -45,8 +47,20 @@ export function OrderCard({ item, onOpen }) {
 }
 
 export function Sheet({ open, title, onClose, children, className = "" }) {
+  const titleId = useId();
+  useEffect(() => {
+    if (!open) return undefined;
+    const previous = document.body.style.overflow;
+    const closeOnEscape = (event) => { if (event.key === "Escape") onClose(); };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previous;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open, onClose]);
   if (!open) return null;
-  return <div className="sheet-backdrop" onMouseDown={onClose}><section className={`sheet ${className}`} onMouseDown={(event) => event.stopPropagation()}><div className="sheet-handle"/><header><h2>{title}</h2><button className="icon-button" onClick={onClose} aria-label="Закрыть"><Icon name="close"/></button></header>{children}</section></div>;
+  return createPortal(<div className="sheet-backdrop" onMouseDown={onClose}><section className={`sheet ${className}`} role="dialog" aria-modal="true" aria-labelledby={titleId} onMouseDown={(event) => event.stopPropagation()}><div className="sheet-handle"/><header><h2 id={titleId}>{title}</h2><button className="icon-button" onClick={onClose} aria-label="Закрыть"><Icon name="close"/></button></header>{children}</section></div>, document.body);
 }
 
 export function Toast({ message, tone = "default", onClose }) {

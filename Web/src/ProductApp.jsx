@@ -28,6 +28,12 @@ const initialMe = {
   unread_notifications: 0,
 };
 
+const EDITABLE_SELECTOR = [
+  "textarea",
+  "[contenteditable='true']",
+  "input:not([type='button']):not([type='submit']):not([type='reset']):not([type='checkbox']):not([type='radio']):not([type='file']):not([type='range']):not([type='color'])",
+].join(",");
+
 export default function ProductApp() {
   const [route, setRoute] = useState({ name: preview?.route || "home", params: preview ? { type: new URLSearchParams(window.location.search).get("type") || "" } : {} });
   const [, setStack] = useState([]);
@@ -125,6 +131,60 @@ export default function ProductApp() {
     webApp?.onEvent?.("safeAreaChanged", applyInsets);
     webApp?.onEvent?.("contentSafeAreaChanged", applyInsets);
     return () => { webApp?.offEvent?.("safeAreaChanged", applyInsets); webApp?.offEvent?.("contentSafeAreaChanged", applyInsets); };
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const viewport = window.visualViewport;
+    const forceKeyboardPreview = Boolean(preview && new URLSearchParams(window.location.search).get("keyboard") === "open");
+    let closeTimer = 0;
+    let scrollTimer = 0;
+
+    const isEditable = (target) => target instanceof Element && target.matches(EDITABLE_SELECTOR) && !target.hasAttribute("readonly");
+    const syncViewport = () => {
+      const height = viewport?.height || window.innerHeight;
+      root.style.setProperty("--lt-visual-viewport-height", `${Math.round(height)}px`);
+    };
+    const showKeyboardLayout = () => {
+      window.clearTimeout(closeTimer);
+      root.dataset.keyboard = "open";
+      syncViewport();
+    };
+    const restoreLayout = () => {
+      if (forceKeyboardPreview || isEditable(document.activeElement)) return;
+      delete root.dataset.keyboard;
+      syncViewport();
+    };
+    const handleFocusIn = (event) => {
+      if (!isEditable(event.target)) return;
+      showKeyboardLayout();
+      window.clearTimeout(scrollTimer);
+      scrollTimer = window.setTimeout(() => {
+        if (document.activeElement !== event.target) return;
+        event.target.scrollIntoView({ behavior: root.dataset.motion === "reduced" ? "auto" : "smooth", block: "nearest", inline: "nearest" });
+      }, 240);
+    };
+    const handleFocusOut = () => {
+      window.clearTimeout(closeTimer);
+      closeTimer = window.setTimeout(restoreLayout, 180);
+    };
+
+    syncViewport();
+    if (forceKeyboardPreview) root.dataset.keyboard = "open";
+    document.addEventListener("focusin", handleFocusIn);
+    document.addEventListener("focusout", handleFocusOut);
+    viewport?.addEventListener("resize", syncViewport, { passive: true });
+    viewport?.addEventListener("scroll", syncViewport, { passive: true });
+    return () => {
+      window.clearTimeout(closeTimer);
+      window.clearTimeout(scrollTimer);
+      document.removeEventListener("focusin", handleFocusIn);
+      document.removeEventListener("focusout", handleFocusOut);
+      viewport?.removeEventListener("resize", syncViewport);
+      viewport?.removeEventListener("scroll", syncViewport);
+      delete root.dataset.keyboard;
+      root.style.removeProperty("--lt-visual-viewport-height");
+    };
   }, []);
 
   const navigate = useCallback((name, params = {}, replace = false) => {

@@ -167,6 +167,16 @@ export default function ProductApp() {
     return () => window.clearTimeout(timer);
   }, [route.name]);
 
+  useEffect(() => {
+    if (!preview || route.name !== "home" || new URLSearchParams(window.location.search).get("open") !== "category-ai") return undefined;
+    const timer = window.setTimeout(() => {
+      const rail = document.querySelector(".category-rail");
+      const card = rail?.querySelector("button.ai");
+      if (rail && card) rail.scrollLeft = Math.max(0, card.offsetLeft - rail.offsetLeft);
+    }, 160);
+    return () => window.clearTimeout(timer);
+  }, [route.name]);
+
   useEffect(() => () => catalogLaunchTimers.current.forEach((timer) => window.clearTimeout(timer)), []);
 
   const openCreate = useCallback((type = "") => {

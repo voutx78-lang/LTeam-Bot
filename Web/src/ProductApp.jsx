@@ -8,6 +8,7 @@ import PromotionsScreen from "./product/screens/PromotionsScreen";
 import { GuideScreen, LegalScreen, NotificationsScreen, ProfileEditSheet, ProfileScreen, SellerProfileScreen, SupportScreen } from "./product/screens/AccountScreens";
 import SettingsSheet from "./product/screens/SettingsSheet";
 import CatalogLaunch from "./product/components/CatalogLaunch";
+import CreateLaunch from "./product/components/CreateLaunch";
 import Icon from "./product/icons";
 import { BottomNav, Brand, EmptyState, Loading, ServiceCard, Sheet, Toast } from "./product/components";
 import { FALLBACK_CATEGORIES } from "./product/constants";
@@ -49,6 +50,10 @@ export default function ProductApp() {
   const [sellerReviews, setSellerReviews] = useState([]);
   const [catalogLaunch, setCatalogLaunch] = useState(null);
   const catalogLaunchTimers = useRef([]);
+  const [createLaunch, setCreateLaunch] = useState(null);
+  const createLaunchTimers = useRef([]);
+  const [touchEffect, setTouchEffect] = useState(null);
+  const touchEffectTimer = useRef(0);
 
   const notify = useCallback((message, tone = "default") => {
     setToast({ message, tone });
@@ -177,12 +182,47 @@ export default function ProductApp() {
     return () => window.clearTimeout(timer);
   }, [route.name]);
 
-  useEffect(() => () => catalogLaunchTimers.current.forEach((timer) => window.clearTimeout(timer)), []);
+  useEffect(() => () => {
+    catalogLaunchTimers.current.forEach((timer) => window.clearTimeout(timer));
+    createLaunchTimers.current.forEach((timer) => window.clearTimeout(timer));
+    window.clearTimeout(touchEffectTimer.current);
+  }, []);
 
-  const openCreate = useCallback((type = "") => {
+  const openCreate = useCallback((type = "", bounds = null) => {
     const safeType = ["listing", "order"].includes(type) ? type : "";
-    navigate("create", safeType ? { type: safeType } : {});
-  }, [navigate]);
+    const reduced = preferences.display?.animations === false || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduced) { navigate("create", safeType ? { type: safeType } : {}); return; }
+    createLaunchTimers.current.forEach((timer) => window.clearTimeout(timer));
+    const appRect = document.querySelector(".market-app")?.getBoundingClientRect() || { left: 0, width: window.innerWidth };
+    const fallback = document.querySelector(".bottom-nav button.create")?.getBoundingClientRect();
+    const rect = bounds || fallback || { left: appRect.left + appRect.width / 2 - 24, top: window.innerHeight - 96, width: 48, height: 48 };
+    const point = { x: rect.left - appRect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    haptic("medium", preferences.display?.haptics !== false);
+    setCreateLaunch({ phase: "reveal", point, type: safeType });
+    createLaunchTimers.current = [
+      window.setTimeout(() => {
+        navigate("create", safeType ? { type: safeType, entrance: "launch" } : { entrance: "launch" });
+        setCreateLaunch({ phase: "ready", point, type: safeType });
+        haptic("success", preferences.display?.haptics !== false);
+      }, 520),
+      window.setTimeout(() => setCreateLaunch({ phase: "exit", point, type: safeType }), 1150),
+      window.setTimeout(() => setCreateLaunch(null), 1450),
+    ];
+  }, [navigate, preferences.display?.animations, preferences.display?.haptics]);
+
+  const handlePointerDown = useCallback((event) => {
+    const button = event.target.closest("button");
+    if (!button || button.disabled || button.closest(".catalog-launch,.create-launch")) return;
+    window.clearTimeout(touchEffectTimer.current);
+    setTouchEffect({ id: performance.now(), x: event.clientX, y: event.clientY });
+    touchEffectTimer.current = window.setTimeout(() => setTouchEffect(null), 430);
+  }, []);
+
+  useEffect(() => {
+    if (!preview || route.name !== "home" || new URLSearchParams(window.location.search).get("open") !== "create-launch") return undefined;
+    const timer = window.setTimeout(() => document.querySelector(".bottom-nav button.create")?.click(), 180);
+    return () => window.clearTimeout(timer);
+  }, [route.name]);
 
   const goBack = useCallback(() => {
     haptic("selection", preferences.display?.haptics !== false);
@@ -279,11 +319,11 @@ export default function ProductApp() {
   const favorites = listings.filter((item) => item.is_favorite);
   let content;
   if (route.name === "home") content = <HomeScreen me={me} categories={categories} listings={listings} orders={orders} onNavigate={navigate} onSearchLaunch={launchCatalog} onCreate={openCreate} onFavorite={toggleFavorite}/>;
-  else if (route.name === "catalog") content = <CatalogScreen listings={listings} orders={orders} categories={categories} initial={route.params} onNavigate={navigate} onFavorite={toggleFavorite}/>;
+  else if (route.name === "catalog") content = <CatalogScreen listings={listings} orders={orders} categories={categories} initial={route.params} onNavigate={navigate} onCreate={openCreate} onFavorite={toggleFavorite}/>;
   else if (route.name === "listing") content = <ListingDetail item={detail} loading={!detail} onBack={goBack} onSeller={() => navigate("seller", { id: detail.seller_id })} onFavorite={toggleFavorite} onRequest={(selectedPackage) => setRequestSheet({ type: "listing", item: detail, selectedPackage })}/>;
   else if (route.name === "order") content = <OrderDetail item={selectedOrder} onBack={goBack} onApply={() => setRequestSheet({ type: "order", item: selectedOrder })}/>;
   else if (route.name === "create") content = <CreateScreen initialType={route.params.type || ""} categories={categories} onBack={goBack} notify={notify} onDone={async () => { await refresh(); navigate("orders", { tab: "published" }, true); }}/>;
-  else if (route.name === "orders") content = <OrdersScreen me={me} deals={deals} orders={orders} onNavigate={navigate} notify={notify} refresh={refresh}/>;
+  else if (route.name === "orders") content = <OrdersScreen me={me} deals={deals} orders={orders} onNavigate={navigate} onCreate={openCreate} notify={notify} refresh={refresh}/>;
   else if (route.name === "deal") content = selectedDeal ? <DealWorkspace me={me} deal={selectedDeal} onBack={goBack} notify={notify} onRefresh={refresh}/> : <section className="screen"><Loading label="Открываем заказ"/></section>;
   else if (route.name === "profile") content = <ProfileScreen me={me} listings={listings} orders={orders} deals={deals} onNavigate={navigate} onSettings={() => setSettingsOpen(true)} onEdit={() => setProfileEditOpen(true)}/>;
   else if (route.name === "promotions") content = <PromotionsScreen me={me} listings={listings} products={config.star_products || []} initialListingId={route.params.listing_id} onBack={goBack} notify={notify} onUpdated={refresh}/>;
@@ -298,7 +338,7 @@ export default function ProductApp() {
 
   const navActive = route.name === "listing" || route.name === "order" ? "catalog" : route.name === "deal" ? "orders" : route.name === "seller" ? "profile" : route.name;
   const showNav = ["home", "catalog", "create", "orders", "profile"].includes(route.name);
-  return <main className="market-app"><div key={`${route.name}-${JSON.stringify(route.params)}`} className={`route-stage route-${transition}`}>{content}</div>{showNav && <BottomNav active={navActive} onNavigate={navigate} onCreate={openCreate}/>}<CatalogLaunch launch={catalogLaunch}/><RequestSheet data={requestSheet} onClose={() => setRequestSheet(null)} notify={notify} onDone={async () => { setRequestSheet(null); await refresh(); navigate("orders"); }}/><SettingsSheet open={settingsOpen} preferences={preferences} onClose={() => setSettingsOpen(false)} onSave={savePreferences} onClearRecent={clearRecent}/><ProfileEditSheet open={profileEditOpen} me={me} onClose={() => setProfileEditOpen(false)} onSave={saveProfile}/><Toast message={toast.message} tone={toast.tone} onClose={() => setToast({ message: "", tone: "default" })}/></main>;
+  return <main className="market-app" onPointerDownCapture={handlePointerDown}><div key={`${route.name}-${JSON.stringify(route.params)}`} className={`route-stage route-${transition}`}>{content}</div>{showNav && <BottomNav active={navActive} onNavigate={navigate} onCreate={openCreate}/>}<CatalogLaunch launch={catalogLaunch}/><CreateLaunch launch={createLaunch}/>{touchEffect && <i key={touchEffect.id} className="touch-feedback" style={{ "--touch-x": `${touchEffect.x}px`, "--touch-y": `${touchEffect.y}px` }} aria-hidden="true"/>}<RequestSheet data={requestSheet} onClose={() => setRequestSheet(null)} notify={notify} onDone={async () => { setRequestSheet(null); await refresh(); navigate("orders"); }}/><SettingsSheet open={settingsOpen} preferences={preferences} onClose={() => setSettingsOpen(false)} onSave={savePreferences} onClearRecent={clearRecent}/><ProfileEditSheet open={profileEditOpen} me={me} onClose={() => setProfileEditOpen(false)} onSave={saveProfile}/><Toast message={toast.message} tone={toast.tone} onClose={() => setToast({ message: "", tone: "default" })}/></main>;
 }
 
 function RequestSheet({ data, onClose, notify, onDone }) {

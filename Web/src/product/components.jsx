@@ -30,7 +30,7 @@ export function Loading({ label = "Загружаем LT Market" }) {
 export function BottomNav({ active, onNavigate, onCreate }) {
   const items = [["home", "Главная", "home"], ["catalog", "Каталог", "grid"], ["create", "Создать", "plus"], ["orders", "Заказы", "briefcase"], ["profile", "Профиль", "user"]];
   const activeIndex = Math.max(0, items.findIndex(([id]) => id === active));
-  return <nav className={`bottom-nav ${active === "create" ? "nav-create-active" : ""}`} aria-label="Основная навигация" style={{ "--nav-index": activeIndex }}><i className="nav-indicator" aria-hidden="true"/>{items.map(([id, label, icon]) => <button type="button" key={id} aria-current={active === id ? "page" : undefined} className={`${active === id ? "active" : ""} ${id === "create" ? "create" : ""}`} onClick={() => id === "create" ? onCreate() : onNavigate(id)}><i><Icon name={icon} size={id === "create" ? 24 : 20}/></i><span>{label}</span></button>)}</nav>;
+  return <nav className={`bottom-nav ${active === "create" ? "nav-create-active" : ""}`} aria-label="Основная навигация" style={{ "--nav-index": activeIndex }}><i className="nav-indicator" aria-hidden="true"/>{items.map(([id, label, icon]) => <button type="button" key={id} aria-current={active === id ? "page" : undefined} className={`${active === id ? "active" : ""} ${id === "create" ? "create" : ""}`} onClick={(event) => id === "create" ? onCreate("", event.currentTarget.getBoundingClientRect()) : onNavigate(id)}><i><Icon name={icon} size={id === "create" ? 24 : 20}/></i><span>{label}</span></button>)}</nav>;
 }
 
 export function ServiceCard({ item, onOpen, onFavorite, dense = false }) {

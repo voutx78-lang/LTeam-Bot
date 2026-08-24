@@ -187,7 +187,7 @@ def health_check():
         return jsonify({
             "ok": True,
             "product": "LT Market",
-            "version": "2026.08-stars-v1",
+            "version": "2026.08-settings-v2",
             "payments_enabled": PAYMENTS_ENABLED,
             "stars_enabled": bool(BOT_TOKEN),
             "storage": "cloud_snapshot" if os.getenv("DATABASE_URL") else "local",
@@ -340,6 +340,11 @@ def preferences_api():
             settings = payload.get("notifications", {})
             if not isinstance(settings, dict):
                 settings = {}
+            settings = {
+                "messages": settings.get("messages", True) is not False,
+                "orders": settings.get("orders", True) is not False,
+                "recommendations": settings.get("recommendations", True) is not False,
+            }
             display = payload.get("display", {})
             if not isinstance(display, dict):
                 display = {}
@@ -348,6 +353,7 @@ def preferences_api():
                 "haptics": display.get("haptics", True) is not False,
                 "compact_cards": bool(display.get("compact_cards", False)),
                 "language": "ru",
+                "accent": str(display.get("accent", "violet")) if str(display.get("accent", "violet")) in {"violet", "ocean", "mint", "sunset"} else "violet",
             }
             connection.execute("""INSERT INTO user_preferences(user_id, market_role, theme, notification_settings, display_settings, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET market_role=excluded.market_role,
@@ -358,16 +364,23 @@ def preferences_api():
             connection.commit()
         row = connection.execute("SELECT market_role, theme, notification_settings, display_settings FROM user_preferences WHERE user_id=?", (user_id,)).fetchone()
     if not row:
-        return jsonify({"role": "both", "theme": "system", "notifications": {"messages": True, "orders": True, "recommendations": True}, "display": {"animations": True, "haptics": True, "compact_cards": False, "language": "ru"}})
+        return jsonify({"role": "both", "theme": "system", "notifications": {"messages": True, "orders": True, "recommendations": True}, "display": {"animations": True, "haptics": True, "compact_cards": False, "language": "ru", "accent": "violet"}})
     try:
         settings = json.loads(row["notification_settings"] or "{}")
     except json.JSONDecodeError:
         settings = {}
+    if not isinstance(settings, dict):
+        settings = {}
+    settings = {
+        "messages": settings.get("messages", True) is not False,
+        "orders": settings.get("orders", True) is not False,
+        "recommendations": settings.get("recommendations", True) is not False,
+    }
     try:
         display = json.loads(row["display_settings"] or "{}")
     except json.JSONDecodeError:
         display = {}
-    display = {"animations": display.get("animations", True) is not False, "haptics": display.get("haptics", True) is not False, "compact_cards": bool(display.get("compact_cards", False)), "language": "ru"}
+    display = {"animations": display.get("animations", True) is not False, "haptics": display.get("haptics", True) is not False, "compact_cards": bool(display.get("compact_cards", False)), "language": "ru", "accent": str(display.get("accent", "violet")) if str(display.get("accent", "violet")) in {"violet", "ocean", "mint", "sunset"} else "violet"}
     return jsonify({"role": row["market_role"], "theme": row["theme"], "notifications": settings, "display": display})
 
 

@@ -5,7 +5,8 @@ import CreateScreen from "./product/screens/CreateScreen";
 import OrdersScreen, { DealWorkspace } from "./product/screens/OrdersScreen";
 import AdminScreen from "./product/screens/AdminScreen";
 import PromotionsScreen from "./product/screens/PromotionsScreen";
-import { GuideScreen, LegalScreen, NotificationsScreen, ProfileEditSheet, ProfileScreen, SellerProfileScreen, SettingsSheet, SupportScreen } from "./product/screens/AccountScreens";
+import { GuideScreen, LegalScreen, NotificationsScreen, ProfileEditSheet, ProfileScreen, SellerProfileScreen, SupportScreen } from "./product/screens/AccountScreens";
+import SettingsSheet from "./product/screens/SettingsSheet";
 import Icon from "./product/icons";
 import { BottomNav, Brand, EmptyState, Loading, ServiceCard, Sheet, Toast } from "./product/components";
 import { FALLBACK_CATEGORIES } from "./product/constants";
@@ -34,11 +35,11 @@ export default function ProductApp() {
   const [orders, setOrders] = useState(preview?.orders || []);
   const [deals, setDeals] = useState(preview?.deals || []);
   const [notifications, setNotifications] = useState(preview?.notifications || []);
-  const [preferences, setPreferences] = useState(preview?.preferences || { role: "both", theme: "system", notifications: { messages: true, orders: true, recommendations: true }, display: { animations: true, haptics: true, compact_cards: false, language: "ru" } });
+  const [preferences, setPreferences] = useState(preview?.preferences || { role: "both", theme: "system", notifications: { messages: true, orders: true, recommendations: true }, display: { animations: true, haptics: true, compact_cards: false, language: "ru", accent: "violet" } });
   const [loading, setLoading] = useState(!preview);
   const [bootError, setBootError] = useState("");
   const [toast, setToast] = useState({ message: "", tone: "default" });
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(() => Boolean(preview && new URLSearchParams(window.location.search).get("open") === "settings"));
   const [profileEditOpen, setProfileEditOpen] = useState(false);
   const [transition, setTransition] = useState("forward");
   const [requestSheet, setRequestSheet] = useState(null);
@@ -100,6 +101,7 @@ export default function ProductApp() {
     const root = document.documentElement;
     root.dataset.motion = preferences.display?.animations === false ? "reduced" : "full";
     root.dataset.density = preferences.display?.compact_cards ? "compact" : "comfortable";
+    root.dataset.accent = preferences.display?.accent || "violet";
   }, [preferences.display]);
 
   useEffect(() => {

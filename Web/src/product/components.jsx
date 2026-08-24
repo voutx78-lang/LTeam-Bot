@@ -4,7 +4,7 @@ import Icon from "./icons";
 import { initials, money } from "./api";
 
 export function Brand({ compact = false }) {
-  return <span className={`lt-brand ${compact ? "compact" : ""}`}><span className="lt-logo" aria-hidden="true"><i>L</i><i>T</i></span>{!compact && <span><b>LT Market</b><small>digital services</small></span>}</span>;
+  return <span className={`lt-brand ${compact ? "compact" : ""}`}><span className="lt-logo" aria-hidden="true"><img src="/assets/lt-market-mark-v2.png" alt="" decoding="async"/></span>{!compact && <span><b>LT Market</b><small>digital services</small></span>}</span>;
 }
 
 export function Avatar({ src, name, size = "md", verified = false }) {

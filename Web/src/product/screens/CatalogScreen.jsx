@@ -25,6 +25,7 @@ const SORT_OPTIONS = [
 
 export default function CatalogScreen({ listings, orders, categories, initial = {}, onNavigate, onCreate, onFavorite }) {
   const [type, setType] = useState(initial.type || "services");
+  const [switchDirection, setSwitchDirection] = useState("next");
   const [query, setQuery] = useState(initial.query || "");
   const [category, setCategory] = useState(initial.category || "");
   const [sort, setSort] = useState("relevant");
@@ -40,6 +41,11 @@ export default function CatalogScreen({ listings, orders, categories, initial = 
     return () => window.clearTimeout(timer);
   }, [initial.focus, initial.focusDelay]);
   const source = type === "services" ? listings : orders;
+  const selectType = (nextType) => {
+    if (nextType === type) return;
+    setSwitchDirection(nextType === "orders" ? "next" : "prev");
+    setType(nextType);
+  };
   const visible = useMemo(() => source.filter((item) => {
     const haystack = `${item.title || ""} ${item.description || ""} ${item.category || ""} ${item.seller_name || item.customer_name || ""}`.toLowerCase();
     if (query.trim() && !haystack.includes(query.trim().toLowerCase())) return false;
@@ -48,12 +54,24 @@ export default function CatalogScreen({ listings, orders, categories, initial = 
     if (fastOnly && !String(item.delivery_time || item.deadline || "").match(/1|2|3|день|дня/)) return false;
     return true;
   }).sort(sorters[sort] || sorters.relevant), [source, query, category, reviewedOnly, fastOnly, sort]);
-  return <section className={`screen catalog-screen ${initial.entrance === "search" ? "search-arrival" : ""}`}><PageHeader eyebrow="МАРКЕТПЛЕЙС" title={type === "services" ? "Каталог услуг" : "Задачи заказчиков"} action={<button className="header-create" onClick={(event) => onCreate(type === "services" ? "listing" : "order", event.currentTarget.getBoundingClientRect())}><Icon name="plus" size={18}/> Создать</button>}/>
-    <div className="catalog-switch"><button className={type === "services" ? "active" : ""} onClick={() => setType("services")}><b>Услуги</b><span>Выбрать готовое предложение</span></button><button className={type === "orders" ? "active" : ""} onClick={() => setType("orders")}><b>Задачи</b><span>Найти проект и откликнуться</span></button></div>
-    <div className="catalog-search-row"><label><Icon name="search"/><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={type === "services" ? "Название услуги или исполнитель" : "Что нужно сделать?"}/>{query && <button onClick={() => setQuery("")} aria-label="Очистить"><Icon name="close" size={17}/></button>}</label><button className={(category || reviewedOnly || fastOnly) ? "active" : ""} onClick={() => setFiltersOpen(true)} aria-label="Фильтры"><Icon name="filter"/></button></div>
-    <div className="category-chips"><button className={!category ? "active" : ""} onClick={() => setCategory("")}>Все</button>{categories.map((item) => <button className={category === item ? "active" : ""} key={item} onClick={() => setCategory(item)}>{CATEGORY_META[item]?.short || item}</button>)}</div>
-    <div className="catalog-toolbar"><span>{visible.length} {visible.length === 1 ? "результат" : "результатов"}</span><MobileSelect variant="toolbar" value={sort} onChange={setSort} options={sortOptions} title="Как показать результаты" eyebrow="СОРТИРОВКА"/></div>
-    {visible.length ? type === "services" ? <div className="catalog-grid">{visible.map((item) => <ServiceCard key={item.id} item={item} onOpen={() => onNavigate("listing", { id: item.id })} onFavorite={onFavorite}/>)}</div> : <div className="order-list catalog-orders">{visible.map((item) => <OrderCard key={item.id} item={item} onOpen={() => onNavigate("order", { id: item.id })}/>)}</div> : <EmptyState icon="search" title="Ничего не найдено" text="Попробуйте убрать часть фильтров или изменить запрос." action="Сбросить фильтры" onAction={() => { setQuery(""); setCategory(""); setReviewedOnly(false); setFastOnly(false); }}/>}
+  return <section className={`screen catalog-screen catalog-type-${type} ${initial.entrance === "search" ? "search-arrival" : ""}`}><PageHeader eyebrow="МАРКЕТПЛЕЙС" title={<span key={type} className={`catalog-title-swap ${switchDirection}`}>{type === "services" ? "Каталог услуг" : "Задачи заказчиков"}</span>} action={<button className="header-create" onClick={(event) => onCreate(type === "services" ? "listing" : "order", event.currentTarget.getBoundingClientRect())}><Icon name="plus" size={18}/> Создать</button>}/>
+    <div className={`catalog-switch ${type}`}><i className="catalog-switch-indicator" aria-hidden="true"/><button className={type === "services" ? "active" : ""} aria-pressed={type === "services"} onClick={() => selectType("services")}><b>Услуги</b><span>Выбрать готовое предложение</span></button><button className={type === "orders" ? "active" : ""} aria-pressed={type === "orders"} onClick={() => selectType("orders")}><b>Задачи</b><span>Найти проект и откликнуться</span></button></div>
+    <div key={type} className={`catalog-view-swap ${switchDirection}`}>
+      <div className="catalog-search-row"><label><Icon name="search"/><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={type === "services" ? "Название услуги или исполнитель" : "Что нужно сделать?"}/>{query && <button onClick={() => setQuery("")} aria-label="Очистить"><Icon name="close" size={17}/></button>}</label><button className={(category || reviewedOnly || fastOnly) ? "active" : ""} onClick={() => setFiltersOpen(true)} aria-label="Фильтры"><Icon name="filter"/></button></div>
+      <div className="category-chips"><button className={!category ? "active" : ""} onClick={() => setCategory("")}>Все</button>{categories.map((item) => <button className={category === item ? "active" : ""} key={item} onClick={() => setCategory(item)}>{CATEGORY_META[item]?.short || item}</button>)}</div>
+      <div className="catalog-toolbar"><span>{visible.length} {visible.length === 1 ? "результат" : "результатов"}</span><MobileSelect variant="toolbar" value={sort} onChange={setSort} options={sortOptions} title="Как показать результаты" eyebrow="СОРТИРОВКА"/></div>
+      {visible.length ? (
+        type === "services"
+          ? <div className="catalog-grid">{visible.map((item) => <ServiceCard key={item.id} item={item} onOpen={() => onNavigate("listing", { id: item.id })} onFavorite={onFavorite}/>)}</div>
+          : <div className="order-list catalog-orders">{visible.map((item) => <OrderCard key={item.id} item={item} onOpen={() => onNavigate("order", { id: item.id })}/>)}</div>
+      ) : <EmptyState
+        icon="search"
+        title="Ничего не найдено"
+        text="Попробуйте убрать часть фильтров или изменить запрос."
+        action="Сбросить фильтры"
+        onAction={() => { setQuery(""); setCategory(""); setReviewedOnly(false); setFastOnly(false); }}
+      />}
+    </div>
     <Sheet open={filtersOpen} title="Фильтры" onClose={() => setFiltersOpen(false)}><div className="filter-sheet"><div className="field"><span>Категория</span><MobileSelect value={category} onChange={setCategory} options={categoryOptions} title="Категория" eyebrow="ФИЛЬТР" searchable/></div>{type === "services" && <label className="toggle-row"><span><b>Только с отзывами</b><small>Показывать исполнителей с историей</small></span><input type="checkbox" checked={reviewedOnly} onChange={(event) => setReviewedOnly(event.target.checked)}/></label>}<label className="toggle-row"><span><b>Быстрый срок</b><small>До трёх дней</small></span><input type="checkbox" checked={fastOnly} onChange={(event) => setFastOnly(event.target.checked)}/></label><button className="primary-button wide" onClick={() => setFiltersOpen(false)}>Показать {visible.length}</button></div></Sheet>
   </section>;
 }

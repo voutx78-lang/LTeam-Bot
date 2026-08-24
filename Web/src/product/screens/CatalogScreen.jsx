@@ -22,7 +22,11 @@ export default function CatalogScreen({ listings, orders, categories, initial = 
   const [reviewedOnly, setReviewedOnly] = useState(false);
   const [fastOnly, setFastOnly] = useState(false);
   const searchRef = useRef(null);
-  useEffect(() => { if (initial.focus) window.setTimeout(() => searchRef.current?.focus(), 120); }, [initial.focus]);
+  useEffect(() => {
+    if (!initial.focus) return undefined;
+    const timer = window.setTimeout(() => searchRef.current?.focus(), Number(initial.focusDelay || 120));
+    return () => window.clearTimeout(timer);
+  }, [initial.focus, initial.focusDelay]);
   const source = type === "services" ? listings : orders;
   const visible = useMemo(() => source.filter((item) => {
     const haystack = `${item.title || ""} ${item.description || ""} ${item.category || ""} ${item.seller_name || item.customer_name || ""}`.toLowerCase();
@@ -32,7 +36,7 @@ export default function CatalogScreen({ listings, orders, categories, initial = 
     if (fastOnly && !String(item.delivery_time || item.deadline || "").match(/1|2|3|день|дня/)) return false;
     return true;
   }).sort(sorters[sort] || sorters.relevant), [source, query, category, reviewedOnly, fastOnly, sort]);
-  return <section className="screen catalog-screen"><PageHeader eyebrow="МАРКЕТПЛЕЙС" title={type === "services" ? "Каталог услуг" : "Задачи заказчиков"} action={<button className="header-create" onClick={() => onNavigate("create", { type: type === "services" ? "listing" : "order" })}><Icon name="plus" size={18}/> Создать</button>}/>
+  return <section className={`screen catalog-screen ${initial.entrance === "search" ? "search-arrival" : ""}`}><PageHeader eyebrow="МАРКЕТПЛЕЙС" title={type === "services" ? "Каталог услуг" : "Задачи заказчиков"} action={<button className="header-create" onClick={() => onNavigate("create", { type: type === "services" ? "listing" : "order" })}><Icon name="plus" size={18}/> Создать</button>}/>
     <div className="catalog-switch"><button className={type === "services" ? "active" : ""} onClick={() => setType("services")}><b>Услуги</b><span>Выбрать готовое предложение</span></button><button className={type === "orders" ? "active" : ""} onClick={() => setType("orders")}><b>Задачи</b><span>Найти проект и откликнуться</span></button></div>
     <div className="catalog-search-row"><label><Icon name="search"/><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={type === "services" ? "Название услуги или исполнитель" : "Что нужно сделать?"}/>{query && <button onClick={() => setQuery("")} aria-label="Очистить"><Icon name="close" size={17}/></button>}</label><button className={(category || reviewedOnly || fastOnly) ? "active" : ""} onClick={() => setFiltersOpen(true)} aria-label="Фильтры"><Icon name="filter"/></button></div>
     <div className="category-chips"><button className={!category ? "active" : ""} onClick={() => setCategory("")}>Все</button>{categories.map((item) => <button className={category === item ? "active" : ""} key={item} onClick={() => setCategory(item)}>{CATEGORY_META[item]?.short || item}</button>)}</div>

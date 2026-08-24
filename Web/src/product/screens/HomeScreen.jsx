@@ -2,12 +2,12 @@ import Icon from "../icons";
 import { Avatar, Brand, EmptyState, OrderCard, ServiceCard } from "../components";
 import { CATEGORY_META } from "../constants";
 
-export default function HomeScreen({ me, categories, listings, orders, onNavigate, onCreate, onFavorite }) {
+export default function HomeScreen({ me, categories, listings, orders, onNavigate, onSearchLaunch, onCreate, onFavorite }) {
   const recommended = listings.slice(0, 4);
   const urgentOrders = orders.filter((item) => ["active", "open", "approved"].includes(item.status)).slice(0, 3);
   return <section className="screen home-screen">
     <header className="home-header"><button onClick={() => onNavigate("home")}><Brand/></button><div><button className="notification-button" onClick={() => onNavigate("notifications")} aria-label="Уведомления"><Icon name="bell"/>{me.unread_notifications > 0 && <i>{Math.min(99, me.unread_notifications)}</i>}</button><button onClick={() => onNavigate("profile")}><Avatar src={me.photo_url} name={me.name} size="md"/></button></div></header>
-    <button className="global-search" onClick={() => onNavigate("catalog", { focus: true })}><Icon name="search"/><span>Услуга, специалист или задача</span><kbd>Найти</kbd></button>
+    <button className="global-search" onClick={(event) => onSearchLaunch(event.currentTarget.getBoundingClientRect())} aria-label="Найти услугу, специалиста или задачу"><Icon name="search"/><span>Услуга, специалист или задача</span><i className="global-search-action">Найти <Icon name="arrow" size={14}/></i></button>
 
     <section className="home-intro"><div><small>ЦИФРОВЫЕ ЗАДАЧИ В TELEGRAM</small><h1>От идеи<br/>до результата.</h1><p>Исполнители, понятные условия и вся работа в одном пространстве.</p><div><button className="primary-button" onClick={() => onNavigate("catalog")}>Найти исполнителя <Icon name="arrow"/></button><button className="ghost-button" onClick={() => onCreate("order")}>Разместить задачу</button></div></div><span className="intro-visual" aria-hidden="true"><i/><i/><i/><b>LT</b></span></section>
 

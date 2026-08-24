@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import HomeScreen from "./product/screens/HomeScreen";
 import CatalogScreen, { ListingDetail, OrderDetail } from "./product/screens/CatalogScreen";
 import CreateScreen from "./product/screens/CreateScreen";
@@ -7,6 +7,7 @@ import AdminScreen from "./product/screens/AdminScreen";
 import PromotionsScreen from "./product/screens/PromotionsScreen";
 import { GuideScreen, LegalScreen, NotificationsScreen, ProfileEditSheet, ProfileScreen, SellerProfileScreen, SupportScreen } from "./product/screens/AccountScreens";
 import SettingsSheet from "./product/screens/SettingsSheet";
+import CatalogLaunch from "./product/components/CatalogLaunch";
 import Icon from "./product/icons";
 import { BottomNav, Brand, EmptyState, Loading, ServiceCard, Sheet, Toast } from "./product/components";
 import { FALLBACK_CATEGORIES } from "./product/constants";
@@ -46,6 +47,8 @@ export default function ProductApp() {
   const [detail, setDetail] = useState(null);
   const [seller, setSeller] = useState(null);
   const [sellerReviews, setSellerReviews] = useState([]);
+  const [catalogLaunch, setCatalogLaunch] = useState(null);
+  const catalogLaunchTimers = useRef([]);
 
   const notify = useCallback((message, tone = "default") => {
     setToast({ message, tone });
@@ -129,6 +132,36 @@ export default function ProductApp() {
     });
     window.scrollTo({ top: 0, behavior: "instant" });
   }, [preferences.display?.haptics]);
+
+  const launchCatalog = useCallback((bounds) => {
+    const reduced = preferences.display?.animations === false || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduced) { navigate("catalog", { focus: true }); return; }
+    catalogLaunchTimers.current.forEach((timer) => window.clearTimeout(timer));
+    const appRect = document.querySelector(".market-app")?.getBoundingClientRect() || { left: 0 };
+    const rect = { top: bounds.top, left: bounds.left - appRect.left, width: bounds.width, height: bounds.height };
+    haptic("medium", preferences.display?.haptics !== false);
+    setCatalogLaunch({ phase: "expand", rect });
+    catalogLaunchTimers.current = [
+      window.setTimeout(() => {
+        navigate("catalog", { focus: true, focusDelay: 820, entrance: "search" });
+        setCatalogLaunch({ phase: "ready", rect });
+        haptic("success", preferences.display?.haptics !== false);
+      }, 410),
+      window.setTimeout(() => setCatalogLaunch({ phase: "exit", rect }), 820),
+      window.setTimeout(() => setCatalogLaunch(null), 1120),
+    ];
+  }, [navigate, preferences.display?.animations, preferences.display?.haptics]);
+
+  useEffect(() => {
+    if (!preview || route.name !== "home" || new URLSearchParams(window.location.search).get("open") !== "search") return undefined;
+    const timer = window.setTimeout(() => {
+      const search = document.querySelector(".global-search");
+      if (search) launchCatalog(search.getBoundingClientRect());
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [launchCatalog, route.name]);
+
+  useEffect(() => () => catalogLaunchTimers.current.forEach((timer) => window.clearTimeout(timer)), []);
 
   const openCreate = useCallback((type = "") => {
     const safeType = ["listing", "order"].includes(type) ? type : "";
@@ -229,7 +262,7 @@ export default function ProductApp() {
   const selectedOrder = route.name === "order" ? orders.find((item) => Number(item.id) === Number(route.params.id)) : null;
   const favorites = listings.filter((item) => item.is_favorite);
   let content;
-  if (route.name === "home") content = <HomeScreen me={me} categories={categories} listings={listings} orders={orders} onNavigate={navigate} onCreate={openCreate} onFavorite={toggleFavorite}/>;
+  if (route.name === "home") content = <HomeScreen me={me} categories={categories} listings={listings} orders={orders} onNavigate={navigate} onSearchLaunch={launchCatalog} onCreate={openCreate} onFavorite={toggleFavorite}/>;
   else if (route.name === "catalog") content = <CatalogScreen listings={listings} orders={orders} categories={categories} initial={route.params} onNavigate={navigate} onFavorite={toggleFavorite}/>;
   else if (route.name === "listing") content = <ListingDetail item={detail} loading={!detail} onBack={goBack} onSeller={() => navigate("seller", { id: detail.seller_id })} onFavorite={toggleFavorite} onRequest={(selectedPackage) => setRequestSheet({ type: "listing", item: detail, selectedPackage })}/>;
   else if (route.name === "order") content = <OrderDetail item={selectedOrder} onBack={goBack} onApply={() => setRequestSheet({ type: "order", item: selectedOrder })}/>;
@@ -245,11 +278,11 @@ export default function ProductApp() {
   else if (route.name === "legal") content = <LegalScreen onBack={goBack} onSupport={() => navigate("support")}/>;
   else if (route.name === "support") content = <SupportScreen onBack={goBack} notify={notify}/>;
   else if (route.name === "admin" && me.is_admin) content = <AdminScreen onBack={goBack} notify={notify}/>;
-  else content = <HomeScreen me={me} categories={categories} listings={listings} orders={orders} onNavigate={navigate} onCreate={openCreate} onFavorite={toggleFavorite}/>;
+  else content = <HomeScreen me={me} categories={categories} listings={listings} orders={orders} onNavigate={navigate} onSearchLaunch={launchCatalog} onCreate={openCreate} onFavorite={toggleFavorite}/>;
 
   const navActive = route.name === "listing" || route.name === "order" ? "catalog" : route.name === "deal" ? "orders" : route.name === "seller" ? "profile" : route.name;
   const showNav = ["home", "catalog", "create", "orders", "profile"].includes(route.name);
-  return <main className="market-app"><div key={`${route.name}-${JSON.stringify(route.params)}`} className={`route-stage route-${transition}`}>{content}</div>{showNav && <BottomNav active={navActive} onNavigate={navigate} onCreate={openCreate}/>}<RequestSheet data={requestSheet} onClose={() => setRequestSheet(null)} notify={notify} onDone={async () => { setRequestSheet(null); await refresh(); navigate("orders"); }}/><SettingsSheet open={settingsOpen} preferences={preferences} onClose={() => setSettingsOpen(false)} onSave={savePreferences} onClearRecent={clearRecent}/><ProfileEditSheet open={profileEditOpen} me={me} onClose={() => setProfileEditOpen(false)} onSave={saveProfile}/><Toast message={toast.message} tone={toast.tone} onClose={() => setToast({ message: "", tone: "default" })}/></main>;
+  return <main className="market-app"><div key={`${route.name}-${JSON.stringify(route.params)}`} className={`route-stage route-${transition}`}>{content}</div>{showNav && <BottomNav active={navActive} onNavigate={navigate} onCreate={openCreate}/>}<CatalogLaunch launch={catalogLaunch}/><RequestSheet data={requestSheet} onClose={() => setRequestSheet(null)} notify={notify} onDone={async () => { setRequestSheet(null); await refresh(); navigate("orders"); }}/><SettingsSheet open={settingsOpen} preferences={preferences} onClose={() => setSettingsOpen(false)} onSave={savePreferences} onClearRecent={clearRecent}/><ProfileEditSheet open={profileEditOpen} me={me} onClose={() => setProfileEditOpen(false)} onSave={saveProfile}/><Toast message={toast.message} tone={toast.tone} onClose={() => setToast({ message: "", tone: "default" })}/></main>;
 }
 
 function RequestSheet({ data, onClose, notify, onDone }) {

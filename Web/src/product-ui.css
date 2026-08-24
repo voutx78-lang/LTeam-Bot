@@ -193,3 +193,105 @@ body{background:var(--bg);color:var(--text);overflow-x:hidden}button,input,selec
 /* Keep form controls usable when an Android/iOS software keyboard is open. */
 .bottom-nav{transition:transform .25s var(--motion-snap),opacity .18s ease,visibility 0s linear}.composer-actions{transition:transform .25s var(--motion-snap),opacity .18s ease,visibility 0s linear,background .25s ease,border-color .25s ease}.create-screen{scroll-padding-top:96px;scroll-padding-bottom:28px}:root[data-keyboard="open"] .bottom-nav{transform:translate(-50%,calc(100% + 40px));opacity:0;visibility:hidden;pointer-events:none;transition:transform .25s var(--motion-snap),opacity .16s ease,visibility 0s linear .25s}:root[data-keyboard="open"] .composer-actions{transform:translateY(calc(100% + 96px));opacity:0;visibility:hidden;pointer-events:none;transition:transform .25s var(--motion-snap),opacity .16s ease,visibility 0s linear .25s}:root[data-keyboard="open"] .create-screen{padding-bottom:28px}:root[data-keyboard="open"] .touch-feedback{display:none}
 :root[data-motion="reduced"] .bottom-nav,:root[data-motion="reduced"] .composer-actions{transition:none!important}
+
+/* Mobile-first polish for Telegram's narrow in-app viewport. */
+@media(max-width:560px){
+  html,body,#root{width:100%;max-width:100%;overflow-x:clip}
+  body{overscroll-behavior-y:none}
+  .market-app{width:100%;max-width:none;min-height:100dvh;overflow-x:clip}
+  .screen{width:100%;min-height:100dvh;padding-inline:16px;padding-bottom:calc(118px + max(env(safe-area-inset-bottom),var(--tg-safe-bottom,0px)))}
+  .screen:not(.home-screen){padding-top:6px}
+  .page-header,.simple-head{min-height:72px;gap:10px;padding-top:max(7px,env(safe-area-inset-top),var(--tg-safe-top,0px))}
+  .page-header h1,.simple-head h1{min-width:0;font-size:26px;line-height:1.03;overflow-wrap:anywhere}
+  .page-header small,.simple-head small{font-size:8px}
+  .page-header>.icon-button,.simple-head>.icon-button{width:42px;height:42px;border-radius:14px}
+  .header-create{min-height:42px;padding-inline:12px;border-radius:14px}
+  .home-header{min-height:66px}
+  .global-search{min-height:56px;margin-block:8px 18px;border-radius:18px}
+  .global-search>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .global-search-action{min-height:36px;flex:0 0 auto}
+  .home-intro{min-height:348px;padding:26px 22px;border-radius:24px}
+  .home-intro h1{margin-block:12px 10px;font-size:clamp(36px,11vw,43px);letter-spacing:-1.7px}
+  .home-intro p{max-width:320px;font-size:13px;line-height:1.43}
+  .home-intro>div>div{width:min(100%,302px);margin-top:22px;display:grid;grid-template-columns:1fr;gap:9px}
+  .home-intro .primary-button,.home-intro .ghost-button{min-height:49px}
+  .section-heading{margin-top:32px;gap:12px}
+  .section-heading h2{font-size:25px;line-height:1.05}
+  .section-heading button{flex:0 0 auto}
+  .category-rail,.service-rail{margin-inline:-16px;padding-inline:16px;scroll-padding-inline:16px;overscroll-behavior-x:contain}
+  .category-rail{grid-auto-columns:min(46vw,176px)}
+  .service-rail{grid-auto-columns:min(86vw,350px)}
+  .category-rail>button{min-height:148px;border-radius:20px}
+  .catalog-switch{margin-top:7px;border-radius:17px}
+  .catalog-switch button{min-height:64px;padding:9px 12px;border-radius:13px}
+  .catalog-search-row{grid-template-columns:minmax(0,1fr) 50px;gap:8px}
+  .catalog-search-row label,.catalog-search-row>button{min-height:52px;border-radius:16px}
+  .category-chips{margin-inline:-16px;padding-inline:16px;scroll-padding-inline:16px;overscroll-behavior-x:contain}
+  .category-chips button{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .catalog-toolbar{min-height:54px;gap:8px}
+  .catalog-toolbar>span{white-space:nowrap}
+  .catalog-toolbar .mobile-select-trigger.toolbar{max-width:min(190px,62vw)}
+  .catalog-grid,.catalog-orders{gap:12px}
+  .service-card,.order-card{border-radius:21px}
+  .service-body{padding:14px}
+  .service-body h3{min-height:0;margin-block:13px 11px;font-size:17px}
+  .service-body footer{margin-top:13px;padding-top:12px}
+  .detail-gallery{margin-inline:-16px;padding-inline:16px;scroll-padding-inline:16px}
+  .detail-gallery img,.detail-gallery>div{border-radius:20px}
+  .detail-title>h1,.order-detail-card>h1{font-size:29px}
+  .package-card,.detail-section,.order-detail-card,.customer-card{padding:16px;border-radius:19px}
+  .package-card header{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:12px}
+  .package-card header>div:first-child{grid-column:1/-1}
+  .sticky-action,.composer-actions{bottom:calc(87px + max(env(safe-area-inset-bottom),var(--tg-safe-bottom,0px)));margin:18px 0 0;padding:10px 11px;border:1px solid var(--line);border-radius:18px;background:color-mix(in srgb,var(--surface) 96%,transparent);box-shadow:0 12px 30px color-mix(in srgb,#050713 18%,transparent)}
+  .sticky-action>div,.composer-actions>span{min-width:0}
+  .composer-actions>span{max-width:92px;line-height:1.3}
+  .sticky-action .primary-button,.composer-actions .primary-button{min-height:48px;padding-inline:15px}
+  .composer-copy.composer-intro{min-height:232px;padding:20px;border-radius:21px}
+  .composer-copy.composer-intro h2{max-width:82%;font-size:28px}
+  .composer-copy.composer-intro>p{max-width:76%;font-size:10px}
+  .composer-intro-note{max-width:82%;min-height:30px;margin-top:12px}
+  .composer-body{gap:15px}
+  .field input,.field select{min-height:52px}
+  .field textarea{min-height:122px}
+  .cover-upload,.reference-upload{min-height:190px;border-radius:20px}
+  .package-editor article{padding:14px;border-radius:18px}
+  .package-editor article>div{gap:8px}
+  .orders-tabs,.admin-tabs{margin:5px -16px 16px;padding:4px 16px;gap:7px;border-radius:0;background:transparent;scroll-padding-inline:16px;scroll-snap-type:x proximity;overscroll-behavior-x:contain}
+  .orders-tabs button,.admin-tabs button{flex:0 0 auto;min-height:40px;padding-inline:12px;scroll-snap-align:start;border:1px solid var(--line)!important;border-radius:12px;background:var(--surface)!important}
+  .orders-tabs button.active,.admin-tabs button.active{border-color:color-mix(in srgb,var(--brand) 42%,var(--line))!important;background:var(--brand-soft)!important;box-shadow:none}
+  .deal-summary{grid-template-columns:1fr;padding:15px}
+  .deal-summary>div{padding:12px 0 0;border-left:0;border-top:1px solid var(--line)}
+  .deal-timeline{margin-inline:-16px;padding:0 16px 6px;grid-template-columns:repeat(5,minmax(68px,1fr));overflow-x:auto;scrollbar-width:none}
+  .deal-actions{grid-template-columns:1fr}
+  .chat-composer{bottom:8px;margin:18px 0 0;padding:9px;border:1px solid var(--line);border-radius:18px;box-shadow:0 12px 30px color-mix(in srgb,#050713 18%,transparent)}
+  .profile-card{padding:17px;border-radius:22px}
+  .profile-card h2,.seller-hero h1{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .profile-group{border-radius:20px}
+  .profile-group button{padding-inline:12px;gap:9px}
+  .notification-group>button{grid-template-columns:42px minmax(0,1fr) auto;padding-inline:12px}
+  .notification-group>button>svg{display:none}
+  .admin-command{border-radius:23px}
+  .admin-kpis{gap:9px}
+  .admin-kpis article{min-height:122px;padding:15px}
+  .admin-worklist footer,.admin-user-detail>footer{grid-template-columns:1fr}
+  .user-detail-metrics{grid-template-columns:repeat(2,1fr)}
+  .admin-user-list>button,.admin-priority>button{gap:9px}
+  .empty-state{min-height:224px;padding:30px 18px;border-radius:21px}
+  .sheet-backdrop,.mobile-select-backdrop{width:100%;max-width:100%;padding-top:max(48px,env(safe-area-inset-top),var(--tg-safe-top,0px))}
+  .sheet,.mobile-select-sheet{width:100%;max-width:100%;max-height:calc(100dvh - max(8px,var(--tg-safe-top,0px)));border-radius:24px 24px 0 0}
+  .toast{width:calc(100% - 24px);max-width:520px;bottom:calc(88px + max(env(safe-area-inset-bottom),var(--tg-safe-bottom,0px)));border-radius:16px}
+}
+@media(max-width:380px){
+  .screen{padding-inline:12px}
+  .page-header,.simple-head{gap:8px}.page-header h1,.simple-head h1{font-size:23px}
+  .home-intro{min-height:334px;padding-inline:19px}.home-intro h1{font-size:36px}
+  .category-rail,.service-rail,.category-chips,.detail-gallery{margin-inline:-12px;padding-inline:12px;scroll-padding-inline:12px}
+  .category-rail{grid-auto-columns:min(47vw,164px)}
+  .catalog-switch button{padding-inline:9px}.catalog-switch button b{font-size:13px}.catalog-switch button span{font-size:9px}
+  .orders-tabs,.admin-tabs{margin-inline:-12px;padding-inline:12px;scroll-padding-inline:12px}
+  .composer-copy.composer-intro{min-height:218px;padding:18px}.composer-copy.composer-intro h2{font-size:26px}
+  .composer-actions>span{display:none}.composer-actions .primary-button{width:100%}
+  .package-card header{grid-template-columns:1fr}.package-card header>div:first-child{grid-column:auto}
+  .portfolio-upload{grid-template-columns:repeat(2,1fr)}
+  .settings-role-grid>button>small,.settings-theme-grid>button>small{display:none}
+}

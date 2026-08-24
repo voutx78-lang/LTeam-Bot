@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { EmptyState, PageHeader } from "../components";
 import Icon from "../icons";
 import { api, dateLabel, send, telegram } from "../api";
+import MobileSelect from "../components/MobileSelect";
 
 const PRODUCT_ICONS = { promo_bump: "arrow", promo_highlight: "spark", promo_top: "star" };
 const PRODUCT_LABELS = { promo_bump: "Быстрый старт", promo_highlight: "Больше внимания", promo_top: "Максимум показов" };
@@ -20,6 +21,7 @@ export default function PromotionsScreen({ me, listings, products = [], initialL
   const [listingId, setListingId] = useState(() => Number(initialListingId || ownListings[0]?.id || 0));
   const [payments, setPayments] = useState([]);
   const [buying, setBuying] = useState("");
+  const listingOptions = useMemo(() => ownListings.map((item) => ({ value: Number(item.id), label: item.title, description: `Объявление #${item.id}`, icon: "grid" })), [ownListings]);
 
   const loadPayments = async () => {
     try { setPayments(await api("/api/payments/stars")); }
@@ -83,10 +85,10 @@ export default function PromotionsScreen({ me, listings, products = [], initialL
     </section>
 
     {ownListings.length ? <>
-      <label className="promotion-listing-picker">
+      <div className="promotion-listing-picker">
         <span>КАКУЮ УСЛУГУ ПРОДВИГАТЬ</span>
-        <div><Icon name="grid"/><select value={listingId} onChange={(event) => setListingId(Number(event.target.value))}>{ownListings.map((item) => <option value={item.id} key={item.id}>#{item.id} · {item.title}</option>)}</select><Icon name="chevron" size={18}/></div>
-      </label>
+        <MobileSelect value={listingId} onChange={(value) => setListingId(Number(value))} options={listingOptions} title="Услуга для продвижения" eyebrow="TELEGRAM STARS" searchable/>
+      </div>
       <div className="star-products">
         {products.map((product, index) => <article className={`star-product ${product.promo_type || ""}`} key={product.code}>
           <header><i><Icon name={PRODUCT_ICONS[product.code] || "spark"}/></i><span>{PRODUCT_LABELS[product.code] || `Вариант ${index + 1}`}</span>{product.promo_type === "top" && <em>ПОПУЛЯРНО</em>}</header>

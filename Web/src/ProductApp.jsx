@@ -161,6 +161,12 @@ export default function ProductApp() {
     return () => window.clearTimeout(timer);
   }, [launchCatalog, route.name]);
 
+  useEffect(() => {
+    if (!preview || new URLSearchParams(window.location.search).get("open") !== "select") return undefined;
+    const timer = window.setTimeout(() => document.querySelector(".mobile-select-trigger")?.click(), 160);
+    return () => window.clearTimeout(timer);
+  }, [route.name]);
+
   useEffect(() => () => catalogLaunchTimers.current.forEach((timer) => window.clearTimeout(timer)), []);
 
   const openCreate = useCallback((type = "") => {

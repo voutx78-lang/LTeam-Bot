@@ -28,7 +28,7 @@ const initialMe = {
 };
 
 export default function ProductApp() {
-  const [route, setRoute] = useState({ name: preview?.route || "home", params: {} });
+  const [route, setRoute] = useState({ name: preview?.route || "home", params: preview ? { type: new URLSearchParams(window.location.search).get("type") || "" } : {} });
   const [, setStack] = useState([]);
   const [me, setMe] = useState(preview?.me || initialMe);
   const [config, setConfig] = useState(preview?.config || { categories: FALLBACK_CATEGORIES, payments_enabled: false, beta: true });

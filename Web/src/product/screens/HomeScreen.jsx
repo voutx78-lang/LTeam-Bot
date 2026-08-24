@@ -1,6 +1,7 @@
 import Icon from "../icons";
 import { Avatar, Brand, EmptyState, OrderCard, ServiceCard } from "../components";
 import { CATEGORY_META } from "../constants";
+import homeHeroArtwork from "../../assets/home-hero-workflow-v2.jpg";
 
 export default function HomeScreen({ me, categories, listings, orders, onNavigate, onSearchLaunch, onCreate, onFavorite }) {
   const recommended = listings.slice(0, 4);
@@ -9,7 +10,7 @@ export default function HomeScreen({ me, categories, listings, orders, onNavigat
     <header className="home-header"><button onClick={() => onNavigate("home")}><Brand/></button><div><button className="notification-button" onClick={() => onNavigate("notifications")} aria-label="Уведомления"><Icon name="bell"/>{me.unread_notifications > 0 && <i>{Math.min(99, me.unread_notifications)}</i>}</button><button onClick={() => onNavigate("profile")}><Avatar src={me.photo_url} name={me.name} size="md"/></button></div></header>
     <button className="global-search" onClick={(event) => onSearchLaunch(event.currentTarget.getBoundingClientRect())} aria-label="Найти услугу, специалиста или задачу"><Icon name="search"/><span>Услуга, специалист или задача</span><i className="global-search-action">Найти <Icon name="arrow" size={14}/></i></button>
 
-    <section className="home-intro"><div><small>ЦИФРОВЫЕ ЗАДАЧИ В TELEGRAM</small><h1>От идеи<br/>до результата.</h1><p>Исполнители, понятные условия и вся работа в одном пространстве.</p><div><button className="primary-button" onClick={(event) => onSearchLaunch(event.currentTarget.getBoundingClientRect())}>Найти исполнителя <Icon name="arrow"/></button><button className="ghost-button" onClick={(event) => onCreate("order", event.currentTarget.getBoundingClientRect())}>Разместить задачу</button></div></div><span className="intro-visual" aria-hidden="true"><i/><i/><i/><b>LT</b></span></section>
+    <section className="home-intro"><img className="home-intro-art" src={homeHeroArtwork} alt="" aria-hidden="true"/><div><small>ЦИФРОВЫЕ ЗАДАЧИ В TELEGRAM</small><h1>От идеи<br/>до результата.</h1><p>Исполнители, понятные условия и вся работа в одном пространстве.</p><div><button className="primary-button" onClick={(event) => onSearchLaunch(event.currentTarget.getBoundingClientRect())}>Найти исполнителя <Icon name="arrow"/></button><button className="ghost-button" onClick={(event) => onCreate("order", event.currentTarget.getBoundingClientRect())}>Разместить задачу</button></div></div><span className="home-intro-result" aria-hidden="true"><i><Icon name="check" size={14}/></i><b>Задача → результат</b></span></section>
 
     <section className="home-block"><header className="section-heading"><div><small>НАПРАВЛЕНИЯ</small><h2>Что нужно сделать?</h2></div><button onClick={() => onNavigate("catalog")}>Все</button></header><div className="category-rail">{categories.map((category) => { const meta = CATEGORY_META[category] || { short: category, icon: "grid", className: "other" }; return <button key={category} className={meta.className} onClick={() => onNavigate("catalog", { category })}><i><Icon name={meta.icon}/></i><span>{meta.short}</span><small>Открыть</small></button>; })}</div></section>
 

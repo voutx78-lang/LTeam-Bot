@@ -1458,7 +1458,9 @@ def admin_summary():
         active_orders = connection.execute("SELECT COUNT(*) FROM orders WHERE status='active'").fetchone()[0]
         completed = connection.execute("SELECT COUNT(*) FROM deals WHERE status='completed'").fetchone()[0]
         reports = connection.execute("SELECT COUNT(*) FROM reports WHERE COALESCE(status, 'new')='new'").fetchone()[0]
-    return jsonify({"payments": payments, "disputes": disputes, "payouts": payouts, "moderation": moderation, "tickets": tickets, "users": users, "active_listings": active_listings, "active_orders": active_orders, "completed": completed, "reports": reports})
+        star_pending = connection.execute("SELECT COUNT(*) FROM star_payments WHERE status='pending'").fetchone()[0]
+        star_paid = connection.execute("SELECT COALESCE(SUM(stars),0) FROM star_payments WHERE status='paid'").fetchone()[0]
+    return jsonify({"payments": payments, "disputes": disputes, "payouts": payouts, "moderation": moderation, "tickets": tickets, "users": users, "active_listings": active_listings, "active_orders": active_orders, "completed": completed, "reports": reports, "star_pending": star_pending, "star_paid": star_paid, "runtime_errors": len(recent_update_errors())})
 
 
 @app.get("/api/admin/analytics")
@@ -1473,6 +1475,10 @@ def admin_analytics():
             "deals": connection.execute("SELECT COUNT(*) FROM deals").fetchone()[0],
             "completed": connection.execute("SELECT COUNT(*) FROM deals WHERE status='completed'").fetchone()[0],
             "reviews": connection.execute("SELECT COUNT(*) FROM reviews").fetchone()[0],
+            "active_orders": connection.execute("SELECT COUNT(*) FROM orders WHERE status='active'").fetchone()[0],
+            "open_disputes": connection.execute("SELECT COUNT(*) FROM deal_disputes WHERE status='open'").fetchone()[0],
+            "open_tickets": connection.execute("SELECT COUNT(*) FROM tickets WHERE status IN ('open','answered')").fetchone()[0],
+            "paid_stars": connection.execute("SELECT COALESCE(SUM(stars),0) FROM star_payments WHERE status='paid'").fetchone()[0],
         }
         days = connection.execute("""WITH RECURSIVE dates(day) AS (
             SELECT date('now', '-6 day') UNION ALL SELECT date(day, '+1 day') FROM dates WHERE day < date('now')
@@ -1483,6 +1489,7 @@ def admin_analytics():
             (SELECT COUNT(*) FROM deals WHERE substr(created_at,1,10)=day) AS deals
             FROM dates ORDER BY day""").fetchall()
     totals["completion_rate"] = round((totals["completed"] / totals["deals"] * 100), 1) if totals["deals"] else 0
+    totals["dispute_rate"] = round((totals["open_disputes"] / totals["deals"] * 100), 1) if totals["deals"] else 0
     return jsonify({"totals": totals, "days": [dict(row) for row in days]})
 
 
@@ -1550,7 +1557,7 @@ def admin_user_action(target_id: int):
     payload = request.get_json(silent=True) or {}
     action = str(payload.get("action", "")).lower()
     reason = str(payload.get("reason", "")).strip()[:500]
-    if action not in {"warn", "ban", "unban"}:
+    if action not in {"warn", "ban", "unban", "verify", "unverify"}:
         return jsonify({"error": "validation", "message": "Неизвестное действие."}), 400
     if action in {"warn", "ban"} and len(reason) < 5:
         return jsonify({"error": "validation", "message": "Укажите понятную причину минимум из 5 символов."}), 400
@@ -1561,13 +1568,36 @@ def admin_user_action(target_id: int):
             connection.execute("INSERT INTO admin_warnings(user_id, admin_id, reason, created_at) VALUES (?, ?, ?, ?)", (target_id, admin_id, reason, datetime.now().isoformat()))
         elif action == "ban":
             connection.execute("INSERT OR REPLACE INTO banned_users(user_id, reason, banned_by, created_at) VALUES (?, ?, ?, ?)", (target_id, reason, admin_id, datetime.now().isoformat()))
-        else:
+        elif action == "unban":
             connection.execute("DELETE FROM banned_users WHERE user_id=?", (target_id,))
-        log_admin_action(connection, admin_id, f"miniapp_{action}", target_id, reason or "Блокировка снята")
+        else:
+            connection.execute("UPDATE users SET verified=? WHERE user_id=?", (1 if action == "verify" else 0, target_id))
+        details = reason or {"unban": "Доступ восстановлен", "verify": "Профиль подтверждён", "unverify": "Отметка доверия снята"}.get(action, "Решение применено")
+        log_admin_action(connection, admin_id, f"miniapp_{action}", target_id, details)
         connection.commit()
-    message = {"warn": f"Администратор LT Market вынес предупреждение: {reason}", "ban": f"Доступ к LT Market ограничен. Причина: {reason}", "unban": "Доступ к LT Market восстановлен."}[action]
+    message = {"warn": f"Администратор LT Market вынес предупреждение: {reason}", "ban": f"Доступ к LT Market ограничен. Причина: {reason}", "unban": "Доступ к LT Market восстановлен.", "verify": "Профиль получил отметку Verified в LT Market.", "unverify": "Отметка Verified снята администратором."}[action]
     notify_user(target_id, message, event_type="system", title="Решение администрации", route="support")
     return jsonify({"ok": True, "action": action})
+
+
+@app.get("/api/admin/payments/stars")
+def admin_star_payments():
+    admin_id = require_admin_id()
+    if not admin_id:
+        return jsonify({"error": "forbidden"}), 403
+    with db() as connection:
+        rows = connection.execute("""SELECT p.id, p.user_id, p.product_code, p.listing_id, p.stars, p.currency,
+            p.status, p.created_at, p.paid_at, p.refunded_at,
+            COALESCE(NULLIF(u.display_name,''), NULLIF(u.username,''), 'Пользователь LT') AS user_name,
+            COALESCE(l.title, 'Объявление LT Market') AS listing_title
+            FROM star_payments p LEFT JOIN users u ON u.user_id=p.user_id
+            LEFT JOIN listings l ON l.id=p.listing_id ORDER BY p.id DESC LIMIT 100""").fetchall()
+        totals = connection.execute("""SELECT COUNT(*) AS operations,
+            COALESCE(SUM(CASE WHEN status='paid' THEN stars ELSE 0 END),0) AS paid_stars,
+            COALESCE(SUM(CASE WHEN status='refunded' THEN stars ELSE 0 END),0) AS refunded_stars,
+            COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END),0) AS pending
+            FROM star_payments""").fetchone()
+    return jsonify({"items": [dict(row) for row in rows], "totals": dict(totals), "can_refund": admin_id in OWNER_IDS})
 
 
 @app.get("/api/admin/audit")
@@ -1620,21 +1650,87 @@ def admin_operation_queue(queue_name: str):
                 COALESCE(requisites, '') AS note, created_at FROM withdrawal_requests
                 WHERE status='pending' ORDER BY id ASC LIMIT 50""").fetchall()
         elif queue_name == "tickets":
-            rows = connection.execute("""SELECT id, 'Support request' AS title, 0 AS amount,
-                status, user_id, text AS note, created_at FROM tickets
-                WHERE status IN ('open', 'answered') ORDER BY id ASC LIMIT 50""").fetchall()
+            rows = connection.execute("""SELECT t.id, 'Обращение в поддержку' AS title, 0 AS amount,
+                t.status, t.user_id, t.user_id AS author_id, t.text AS note, t.created_at,
+                COALESCE(NULLIF(u.display_name,''), NULLIF(u.username,''), 'Пользователь LT') AS author_name
+                FROM tickets t LEFT JOIN users u ON u.user_id=t.user_id
+                WHERE t.status IN ('open', 'answered') ORDER BY t.id ASC LIMIT 50""").fetchall()
         elif queue_name == "reports":
             rows = connection.execute("""SELECT r.id, 'Жалоба пользователя' AS title, 0 AS amount,
-                COALESCE(r.status,'new') AS status, r.user_id, r.reason AS note, r.created_at,
-                COALESCE(r.target_type,'listing') AS target_type, COALESCE(r.target_id,r.listing_id,0) AS target_id
-                FROM reports r WHERE COALESCE(r.status,'new')='new' ORDER BY r.id ASC LIMIT 50""").fetchall()
+                COALESCE(r.status,'new') AS status, r.user_id, r.user_id AS author_id, r.reason AS note, r.created_at,
+                COALESCE(r.target_type,'listing') AS target_type, COALESCE(r.target_id,r.listing_id,0) AS target_id,
+                COALESCE(NULLIF(u.display_name,''), NULLIF(u.username,''), 'Пользователь LT') AS author_name,
+                COALESCE(l.title, o.title, 'Объект жалобы') AS target_title
+                FROM reports r LEFT JOIN users u ON u.user_id=r.user_id
+                LEFT JOIN listings l ON COALESCE(r.target_type,'listing')='listing' AND l.id=COALESCE(r.target_id,r.listing_id,0)
+                LEFT JOIN orders o ON r.target_type='order' AND o.id=r.target_id
+                WHERE COALESCE(r.status,'new')='new' ORDER BY r.id ASC LIMIT 50""").fetchall()
         else:
             rows = connection.execute("""SELECT dd.id, COALESCE(o.title, l.title, 'Спор по сделке') AS title,
-                d.amount, d.status, dd.opened_by AS user_id, dd.reason AS note, dd.created_at, dd.deal_id
+                d.amount, d.status, dd.opened_by AS user_id, dd.opened_by AS author_id, dd.reason AS note, dd.created_at, dd.deal_id,
+                dd.buyer_id, dd.seller_id,
+                COALESCE(NULLIF(opener.display_name,''), NULLIF(opener.username,''), 'Пользователь LT') AS author_name,
+                COALESCE(NULLIF(buyer.display_name,''), NULLIF(buyer.username,''), 'Заказчик') AS buyer_name,
+                COALESCE(NULLIF(seller.display_name,''), NULLIF(seller.username,''), 'Исполнитель') AS seller_name
                 FROM deal_disputes dd JOIN deals d ON d.id=dd.deal_id
                 LEFT JOIN orders o ON o.id=d.order_id LEFT JOIN listings l ON l.id=d.listing_id
+                LEFT JOIN users opener ON opener.user_id=dd.opened_by LEFT JOIN users buyer ON buyer.user_id=dd.buyer_id
+                LEFT JOIN users seller ON seller.user_id=dd.seller_id
                 WHERE dd.status='open' ORDER BY dd.id ASC LIMIT 50""").fetchall()
     return jsonify([dict(row) for row in rows])
+
+
+@app.get("/api/admin/disputes/<int:dispute_id>")
+def admin_dispute_detail(dispute_id: int):
+    if not require_admin_id():
+        return jsonify({"error": "forbidden"}), 403
+    with db() as connection:
+        row = connection.execute("""SELECT dd.id, dd.deal_id, dd.opened_by, dd.buyer_id, dd.seller_id,
+            dd.reason, dd.status, dd.created_at, d.amount, d.status AS deal_status,
+            COALESCE(o.title,l.title,'Сделка LT Market') AS title,
+            COALESCE(NULLIF(buyer.display_name,''),NULLIF(buyer.username,''),'Заказчик') AS buyer_name,
+            COALESCE(NULLIF(seller.display_name,''),NULLIF(seller.username,''),'Исполнитель') AS seller_name
+            FROM deal_disputes dd JOIN deals d ON d.id=dd.deal_id
+            LEFT JOIN orders o ON o.id=d.order_id LEFT JOIN listings l ON l.id=d.listing_id
+            LEFT JOIN users buyer ON buyer.user_id=dd.buyer_id LEFT JOIN users seller ON seller.user_id=dd.seller_id
+            WHERE dd.id=?""", (dispute_id,)).fetchone()
+        if not row:
+            return jsonify({"error": "not_found", "message": "Спор не найден."}), 404
+        messages = connection.execute("""SELECT m.id, m.sender_id, m.text, m.created_at,
+            COALESCE(NULLIF(u.display_name,''),NULLIF(u.username,''),CAST(m.sender_id AS TEXT)) AS sender_name
+            FROM deal_messages m LEFT JOIN users u ON u.user_id=m.sender_id
+            WHERE m.deal_id=? ORDER BY m.id DESC LIMIT 40""", (row["deal_id"],)).fetchall()
+        deliveries = connection.execute("""SELECT id, sender_id, version, comment, created_at
+            FROM deal_deliveries WHERE deal_id=? ORDER BY version DESC LIMIT 15""", (row["deal_id"],)).fetchall()
+    return jsonify({"dispute": dict(row), "messages": [dict(item) for item in reversed(messages)], "deliveries": [dict(item) for item in deliveries]})
+
+
+@app.post("/api/admin/disputes/<int:dispute_id>/resolve")
+def admin_resolve_dispute(dispute_id: int):
+    admin_id = require_admin_id()
+    if not admin_id:
+        return jsonify({"error": "forbidden"}), 403
+    payload = request.get_json(silent=True) or {}
+    outcome = str(payload.get("outcome", "")).lower()
+    note = str(payload.get("note", "")).strip()[:1000]
+    if outcome not in {"buyer", "seller", "mutual"} or len(note) < 10:
+        return jsonify({"error": "validation", "message": "Выберите решение и добавьте объяснение минимум из 10 символов."}), 400
+    with db() as connection:
+        row = connection.execute("SELECT deal_id,buyer_id,seller_id,status FROM deal_disputes WHERE id=?", (dispute_id,)).fetchone()
+        if not row:
+            return jsonify({"error": "not_found", "message": "Спор не найден."}), 404
+        if row["status"] != "open":
+            return jsonify({"error": "validation", "message": "Спор уже обработан."}), 409
+        dispute_status = {"buyer": "resolved_buyer", "seller": "resolved_seller", "mutual": "resolved_mutual"}[outcome]
+        deal_status = {"buyer": "dispute_resolved_buyer", "seller": "completed", "mutual": "cancelled"}[outcome]
+        connection.execute("UPDATE deal_disputes SET status=?,resolved_by=?,resolution=?,resolved_at=? WHERE id=? AND status='open'", (dispute_status, admin_id, note, datetime.now().isoformat(), dispute_id))
+        connection.execute("UPDATE deals SET status=? WHERE id=?", (deal_status, row["deal_id"]))
+        log_admin_action(connection, admin_id, f"dispute_resolved_{outcome}", int(row["deal_id"]), f"dispute_id={dispute_id}; {note}")
+        connection.commit()
+    result_label = {"buyer": "в пользу заказчика", "seller": "в пользу исполнителя", "mutual": "по взаимному соглашению"}[outcome]
+    for participant in {int(row["buyer_id"] or 0), int(row["seller_id"] or 0)} - {0}:
+        notify_user(participant, f"Спор #{dispute_id} закрыт {result_label}. Решение: {note}", event_type="dispute", title="Решение по спору", route=f"deal:{row['deal_id']}", entity_id=int(row["deal_id"]))
+    return jsonify({"ok": True, "status": dispute_status})
 
 
 @app.post("/api/admin/moderation/<item_type>/<int:item_id>")
@@ -1676,11 +1772,13 @@ def admin_queue_action(queue_name: str, item_id: int):
     action = str(payload.get("action", "")).lower()
     note = str(payload.get("note", "")).strip()[:500]
     with db() as connection:
-        if queue_name == "tickets" and action in {"close", "reopen"}:
+        if queue_name == "tickets" and action in {"close", "reopen", "reply"}:
             row = connection.execute("SELECT user_id FROM tickets WHERE id=?", (item_id,)).fetchone()
             if not row:
                 return jsonify({"error": "not_found"}), 404
-            status = "closed" if action == "close" else "open"
+            if action == "reply" and len(note) < 3:
+                return jsonify({"error": "validation", "message": "Напишите ответ пользователю."}), 400
+            status = "closed" if action == "close" else "answered" if action == "reply" else "open"
             connection.execute("UPDATE tickets SET status=? WHERE id=?", (status, item_id))
             target_id = int(row["user_id"])
         elif queue_name == "reports" and action == "close":
@@ -1694,6 +1792,8 @@ def admin_queue_action(queue_name: str, item_id: int):
             return jsonify({"error": "validation", "message": "Это действие недоступно для очереди."}), 400
         log_admin_action(connection, admin_id, f"{queue_name}_{action}", target_id, f"#{item_id} {note}".strip())
         connection.commit()
+    if queue_name == "tickets" and action == "reply":
+        notify_user(target_id, note, event_type="support", title="Ответ поддержки LT Market", route="support", entity_id=item_id)
     return jsonify({"ok": True, "status": status})
 
 
